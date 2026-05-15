@@ -1,0 +1,55 @@
+.app {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(0, 0, 0, 0.035), transparent 22rem),
+    var(--bg);
+}
+
+.topbar {
+  display: flex;
+  flex: 0 0 58px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 18px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.topbar strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.topbar span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.icon-button {
+  display: none;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 18px;
+}
+
+.icon-button:hover {
+  background: var(--surface-hover);
+}
