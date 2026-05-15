@@ -89,6 +89,7 @@ async def generate_skill_code(message: str, skill: SkillSpec, llm: DeepSeekClien
                 ),
             },
         ],
+        model=llm.settings.code_model,
         temperature=0,
         max_tokens=2000,
     )

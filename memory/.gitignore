@@ -1,0 +1,4 @@
+short_term/*
+long_term/*
+!short_term/.gitkeep
+!long_term/.gitkeep

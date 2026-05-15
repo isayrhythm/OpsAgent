@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatHistoryMessage
 from backend.app.schemas import TaskEvent
 from backend.app.services.agent_graph import build_agent_graph
@@ -15,6 +16,7 @@ from backend.app.services.deepseek_client import DeepSeekClient
 class TaskState:
     id: str
     message: str
+    user_id: str
     session_id: str | None
     history: list[ChatHistoryMessage]
     queue: asyncio.Queue[TaskEvent] = field(default_factory=asyncio.Queue)
@@ -24,15 +26,17 @@ class TaskState:
 class TaskManager:
     def __init__(self) -> None:
         self._tasks: dict[str, TaskState] = {}
+        self._memory = MemoryStore()
 
     def create_task(
         self,
         message: str,
+        user_id: str,
         session_id: str | None,
         history: list[ChatHistoryMessage],
     ) -> str:
         task_id = uuid.uuid4().hex
-        state = TaskState(id=task_id, message=message, session_id=session_id, history=history)
+        state = TaskState(id=task_id, message=message, user_id=user_id, session_id=session_id, history=history)
         self._tasks[task_id] = state
         asyncio.create_task(self._run(state))
         return task_id
@@ -43,20 +47,13 @@ class TaskManager:
     async def _emit(self, state: TaskState, event_type: str, step: int, status: str, data: Any = None) -> None:
         await state.queue.put(TaskEvent(type=event_type, step=step, status=status, data=data))
 
-    async def _stream_answer(self, state: TaskState, answer: str) -> None:
-        chunk = ""
-        for char in answer:
-            chunk += char
-            if len(chunk) >= 4 or char in "\n。！？.!?":
-                await self._emit(state, "answer_delta", 7, "输出中", {"delta": chunk})
-                chunk = ""
-                await asyncio.sleep(0.018)
-        if chunk:
-            await self._emit(state, "answer_delta", 7, "输出中", {"delta": chunk})
-
     async def _run(self, state: TaskState) -> None:
         llm = DeepSeekClient()
         try:
+            if state.session_id:
+                self._memory.ensure_user_dirs(state.user_id)
+                if not state.history:
+                    state.history = self._memory.load_history(state.user_id, state.session_id)
             graph = build_agent_graph(llm, lambda event_type, step, status, data=None: self._emit(
                 state,
                 event_type,
@@ -66,7 +63,8 @@ class TaskManager:
             ))
             result = await graph.ainvoke({"message": state.message, "history": state.history})
             answer = result.get("answer") or ""
-            await self._stream_answer(state, answer)
+            if state.session_id and answer:
+                self._memory.append_exchange(state.user_id, state.session_id, state.message, answer)
             await self._emit(
                 state,
                 "result",

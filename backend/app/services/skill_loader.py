@@ -10,6 +10,10 @@ from backend.app.config import SKILL_DIR
 class SkillSpec:
     name: str
     description: str
+    version: str
+    trigger: str
+    execution_mode: str
+    data_paths: list[str]
     path: Path
     content: str
 
@@ -30,6 +34,10 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
     return values
 
 
+def _parse_csv_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def _skill_from_path(path: Path, *, include_content: bool) -> SkillSpec | None:
     content = path.read_text(encoding="utf-8")
     meta = _parse_frontmatter(content)
@@ -40,6 +48,10 @@ def _skill_from_path(path: Path, *, include_content: bool) -> SkillSpec | None:
     return SkillSpec(
         name=name,
         description=description,
+        version=meta.get("version", "1").strip(),
+        trigger=meta.get("trigger", description).strip(),
+        execution_mode=meta.get("execution_mode", "generated_python").strip(),
+        data_paths=_parse_csv_list(meta.get("data_paths", "")),
         path=path,
         content=content if include_content else "",
     )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -19,6 +20,7 @@ class DeepSeekClient:
         self,
         messages: list[dict[str, str]],
         *,
+        model: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 2000,
     ) -> str:
@@ -26,7 +28,7 @@ class DeepSeekClient:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
 
         payload: dict[str, Any] = {
-            "model": self.settings.model,
+            "model": model or self.settings.answer_model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -42,3 +44,42 @@ class DeepSeekClient:
             response.raise_for_status()
             body = response.json()
         return body["choices"][0]["message"]["content"]
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int = 2000,
+    ) -> AsyncIterator[str]:
+        if not self.available:
+            raise RuntimeError("DEEPSEEK_API_KEY is not configured")
+
+        payload: dict[str, Any] = {
+            "model": model or self.settings.answer_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        headers = {"Authorization": f"Bearer {self.settings.api_key}"}
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"{self.settings.base_url.rstrip('/')}/chat/completions",
+                json=payload,
+                headers=headers,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    chunk = json.loads(data)
+                    delta = chunk["choices"][0].get("delta", {}).get("content")
+                    if delta:
+                        yield delta

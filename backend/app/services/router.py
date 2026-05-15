@@ -39,7 +39,13 @@ async def route_skill(message: str, skills: list[SkillSpec], llm: DeepSeekClient
         return _fallback_route(message, skills)
 
     catalog = [
-        {"name": skill.name, "description": skill.description}
+        {
+            "name": skill.name,
+            "description": skill.description,
+            "trigger": skill.trigger,
+            "execution_mode": skill.execution_mode,
+            "data_paths": skill.data_paths,
+        }
         for skill in skills
     ]
     response = await llm.chat(
@@ -60,6 +66,7 @@ async def route_skill(message: str, skills: list[SkillSpec], llm: DeepSeekClient
                 ),
             },
         ],
+        model=llm.settings.router_model,
         temperature=0,
         max_tokens=500,
     )

@@ -31,14 +31,22 @@ async def health() -> dict[str, str]:
 @app.get("/api/skills", response_model=list[SkillSummary])
 async def skills() -> list[SkillSummary]:
     return [
-        SkillSummary(name=skill.name, description=skill.description, path=str(skill.path))
+        SkillSummary(
+            name=skill.name,
+            description=skill.description,
+            version=skill.version,
+            trigger=skill.trigger,
+            execution_mode=skill.execution_mode,
+            data_paths=skill.data_paths,
+            path=str(skill.path),
+        )
         for skill in load_skills()
     ]
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    task_id = tasks.create_task(request.message, request.session_id, request.history)
+    task_id = tasks.create_task(request.message, request.user_id, request.session_id, request.history)
     return ChatResponse(task_id=task_id, events_url=f"/api/tasks/{task_id}/events")
 
 

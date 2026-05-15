@@ -8,6 +8,7 @@ LangGraph + FastAPI + Skill 的最小可运行骨架，支持动态装载 `skill
 - `backend/app/llm/`：模型配置、DeepSeek 请求封装和提示词。
 - `frontend/`：前后端分离的静态聊天页面。
 - `skill/`：Skill markdown 定义。新增 `*.md` 后，下次请求会自动扫描并参与路由。
+- `memory/`：后端记忆目录。短期记忆按 `short_term/{user_id}/conversations/{session_id}.json` 落盘，上传文件预留在 `short_term/{user_id}/uploads/`，长期记忆预留在 `long_term/{user_id}/profile.json`。
 - `data/`：测试数据。
 
 ## 配置 DeepSeek
@@ -21,8 +22,11 @@ Copy-Item .env.example .env
 ```dotenv
 DEEPSEEK_API_KEY=your_deepseek_api_key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_ROUTER_MODEL=deepseek-v4-flash
+DEEPSEEK_ANSWER_MODEL=deepseek-v4-pro
+DEEPSEEK_CODE_MODEL=deepseek-v4-pro
 OPSAGENT_EXECUTION_TIMEOUT_SECONDS=20
+OPSAGENT_MEMORY_DIR=memory
 ```
 
 后端启动时会自动读取根目录 `.env`。密钥只写在 `.env`，不要提交到版本库。
@@ -61,8 +65,12 @@ pdm run web
 ```markdown
 ---
 name: query_gene_expression
+version: 1
 description: 当用户请求查询拟南芥基因表达时触发
+trigger: 查询拟南芥基因表达量、基因在组织中的表达水平、gene expression 查询
+execution_mode: generated_python
+data_paths: data/example_gene_expression.csv
 ---
 ```
 
-`name` 和 `description` 会被装载给路由器。文件正文用于指导 LLM 生成执行代码，代码需要把 JSON 可序列化结果赋值给 `result`。
+`name`、`description`、`trigger` 等元信息会被装载给路由器。只有路由命中后，后端才读取完整 Skill 文档并生成执行代码。文件正文用于指导 LLM 生成执行代码，代码需要把 JSON 可序列化结果赋值给 `result`。

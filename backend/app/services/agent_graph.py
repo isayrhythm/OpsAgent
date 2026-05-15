@@ -75,47 +75,57 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             if not llm.available:
                 answer = "当前未配置 DEEPSEEK_API_KEY，无法进行普通对话。"
             else:
-                answer = await llm.chat(
-                    [
-                        {
-                            "role": "system",
-                            "content": GENERAL_CHAT_SYSTEM_PROMPT,
-                        },
-                        *llm_history_messages(state),
-                    ],
+                messages = [
+                    {
+                        "role": "system",
+                        "content": GENERAL_CHAT_SYSTEM_PROMPT,
+                    },
+                    *llm_history_messages(state),
+                ]
+                answer = ""
+                async for delta in llm.stream_chat(
+                    messages,
+                    model=llm.settings.answer_model,
                     temperature=0.4,
                     max_tokens=1200,
-                )
+                ):
+                    answer += delta
+                    await emit("answer_delta", 7, "输出中", {"delta": delta})
             return {"answer": answer}
 
         if not llm.available:
             answer = json.dumps(skill_output["result"], ensure_ascii=False, indent=2)
         else:
-            answer = await llm.chat(
-                [
-                    {
-                        "role": "system",
-                        "content": FINAL_ANSWER_SYSTEM_PROMPT,
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "user_message": state["message"],
-                                "history": [
-                                    {"role": item.role, "content": item.content}
-                                    for item in state.get("history", [])[-12:]
-                                ],
-                                "skill_name": state["skill_name"],
-                                "skill_output": skill_output,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
+            messages = [
+                {
+                    "role": "system",
+                    "content": FINAL_ANSWER_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "user_message": state["message"],
+                            "history": [
+                                {"role": item.role, "content": item.content}
+                                for item in state.get("history", [])[-12:]
+                            ],
+                            "skill_name": state["skill_name"],
+                            "skill_output": skill_output,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+            answer = ""
+            async for delta in llm.stream_chat(
+                messages,
+                model=llm.settings.answer_model,
                 temperature=0.2,
                 max_tokens=1000,
-            )
+            ):
+                answer += delta
+                await emit("answer_delta", 7, "输出中", {"delta": delta})
         return {"answer": answer}
 
     graph.add_node("load_skills", load_skill_node)

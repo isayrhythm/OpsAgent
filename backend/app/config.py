@@ -11,5 +11,6 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 SKILL_DIR = Path(os.getenv("OPSAGENT_SKILL_DIR", PROJECT_ROOT / "skill"))
 DATA_DIR = Path(os.getenv("OPSAGENT_DATA_DIR", PROJECT_ROOT / "data"))
+MEMORY_DIR = Path(os.getenv("OPSAGENT_MEMORY_DIR", PROJECT_ROOT / "memory"))
 
 EXECUTION_TIMEOUT_SECONDS = int(os.getenv("OPSAGENT_EXECUTION_TIMEOUT_SECONDS", "20"))

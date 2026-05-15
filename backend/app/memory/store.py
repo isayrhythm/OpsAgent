@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from backend.app.config import MEMORY_DIR
+from backend.app.schemas import ChatHistoryMessage
+
+
+def _safe_segment(value: str) -> str:
+    value = value.strip() or "default"
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", value)[:80]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass(frozen=True)
+class MemoryPaths:
+    root: Path = MEMORY_DIR
+
+    def user_short_root(self, user_id: str) -> Path:
+        return self.root / "short_term" / _safe_segment(user_id)
+
+    def conversation_path(self, user_id: str, session_id: str) -> Path:
+        return self.user_short_root(user_id) / "conversations" / f"{_safe_segment(session_id)}.json"
+
+    def uploads_dir(self, user_id: str) -> Path:
+        return self.user_short_root(user_id) / "uploads"
+
+    def long_term_profile_path(self, user_id: str) -> Path:
+        return self.root / "long_term" / _safe_segment(user_id) / "profile.json"
+
+
+class MemoryStore:
+    def __init__(self, paths: MemoryPaths | None = None) -> None:
+        self.paths = paths or MemoryPaths()
+
+    def ensure_user_dirs(self, user_id: str) -> None:
+        self.paths.user_short_root(user_id).mkdir(parents=True, exist_ok=True)
+        (self.paths.user_short_root(user_id) / "conversations").mkdir(parents=True, exist_ok=True)
+        self.paths.uploads_dir(user_id).mkdir(parents=True, exist_ok=True)
+        self.paths.long_term_profile_path(user_id).parent.mkdir(parents=True, exist_ok=True)
+
+    def load_history(self, user_id: str, session_id: str, limit: int = 20) -> list[ChatHistoryMessage]:
+        path = self.paths.conversation_path(user_id, session_id)
+        if not path.exists():
+            return []
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        messages = payload.get("messages", [])
+        return [
+            ChatHistoryMessage(role=item["role"], content=item["content"])
+            for item in messages[-limit:]
+            if item.get("role") in {"user", "assistant", "agent"} and item.get("content")
+        ]
+
+    def append_exchange(self, user_id: str, session_id: str, user_message: str, answer: str) -> None:
+        self.ensure_user_dirs(user_id)
+        path = self.paths.conversation_path(user_id, session_id)
+        if path.exists():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            payload = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "created_at": _now(),
+                "messages": [],
+            }
+
+        payload["updated_at"] = _now()
+        payload.setdefault("messages", []).extend(
+            [
+                {"role": "user", "content": user_message, "created_at": _now()},
+                {"role": "assistant", "content": answer, "created_at": _now()},
+            ]
+        )
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -10,6 +10,9 @@ const connectionStateEl = document.querySelector("#connectionState");
 const conversationListEl = document.querySelector("#conversationList");
 
 const STORAGE_KEY = "opsagent.sessions.v1";
+const USER_ID_KEY = "opsagent.user_id.v1";
+const userId = localStorage.getItem(USER_ID_KEY) || crypto.randomUUID();
+localStorage.setItem(USER_ID_KEY, userId);
 
 const suggestions = [
   "查询 AT1G00001 在 leaf 和 root 的表达量",
@@ -294,7 +297,7 @@ async function submitMessage(message) {
     const response = await fetch(`${apiBase()}/api/chat`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({message: text, session_id: sessionId, history}),
+      body: JSON.stringify({message: text, user_id: userId, session_id: sessionId, history}),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
