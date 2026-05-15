@@ -32,6 +32,7 @@ class DeepSeekClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "thinking": {"type": "disabled"},
         }
         headers = {"Authorization": f"Bearer {self.settings.api_key}"}
 
@@ -62,6 +63,7 @@ class DeepSeekClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
+            "thinking": {"type": "disabled"},
         }
         headers = {"Authorization": f"Bearer {self.settings.api_key}"}
 
