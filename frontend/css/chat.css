@@ -87,7 +87,8 @@
 
 .thinking-status {
   display: inline-block;
-  margin: 0 0 8px;
+  min-height: 1.55em;
+  margin: 0 0 6px;
   background: linear-gradient(90deg, #8a8a82, #111, #8a8a82);
   background-size: 220% 100%;
   color: transparent;
@@ -106,15 +107,15 @@
 }
 
 .thinking-status.is-hidden {
-  height: 0;
-  margin: 0;
+  position: absolute;
   opacity: 0;
-  overflow: hidden;
+  pointer-events: none;
   transform: translateY(-4px);
 }
 
 .stream-text {
   min-height: 1.5em;
+  margin: 0;
 }
 
 @keyframes thinking-shimmer {
