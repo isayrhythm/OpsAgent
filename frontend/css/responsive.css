@@ -34,6 +34,10 @@
     gap: 10px;
   }
 
+  .turn.user {
+    grid-template-columns: minmax(0, 1fr) 30px;
+  }
+
   .avatar {
     width: 28px;
     height: 28px;

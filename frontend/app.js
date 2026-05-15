@@ -10,9 +10,16 @@ const connectionStateEl = document.querySelector("#connectionState");
 const conversationListEl = document.querySelector("#conversationList");
 
 const STORAGE_KEY = "opsagent.sessions.v1";
+const ACTIVE_SESSION_KEY = "opsagent.active_session.v1";
 const USER_ID_KEY = "opsagent.user_id.v1";
+const ASSISTANT_LABEL = "Ops";
 const userId = localStorage.getItem(USER_ID_KEY) || crypto.randomUUID();
 localStorage.setItem(USER_ID_KEY, userId);
+const md = window.markdownit({
+  html: false,
+  linkify: true,
+  breaks: false,
+});
 
 const suggestions = [
   "查询 AT1G00001 在 leaf 和 root 的表达量",
@@ -22,7 +29,10 @@ const suggestions = [
 ];
 
 let sessions = loadSessions();
-let activeSessionId = sessions[0]?.id ?? null;
+let activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY);
+if (!sessions.some((session) => session.id === activeSessionId)) {
+  activeSessionId = sessions[0]?.id ?? null;
+}
 
 function apiBase() {
   return apiBaseEl.value.trim().replace(/\/$/, "");
@@ -42,6 +52,15 @@ function saveSessions() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 30)));
 }
 
+function setActiveSession(sessionId) {
+  activeSessionId = sessionId;
+  if (sessionId) {
+    localStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+  } else {
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
+  }
+}
+
 function currentSession() {
   return sessions.find((session) => session.id === activeSessionId) ?? null;
 }
@@ -56,7 +75,7 @@ function createSession(firstMessage = "") {
     messages: [],
   };
   sessions.unshift(session);
-  activeSessionId = session.id;
+  setActiveSession(session.id);
   saveSessions();
   renderConversations();
   return session;
@@ -93,7 +112,7 @@ function renderConversations() {
     button.textContent = session.title || "New chat";
     button.title = session.title || "New chat";
     button.addEventListener("click", () => {
-      activeSessionId = session.id;
+      setActiveSession(session.id);
       renderConversations();
       renderCurrentSession();
       appEl.classList.remove("sidebar-open");
@@ -144,6 +163,10 @@ function scrollToBottom() {
   });
 }
 
+function renderMarkdown(target, content) {
+  target.innerHTML = md.render(content);
+}
+
 function renderTurn(content, role = "agent") {
   const thread = ensureThread();
   const turn = document.createElement("article");
@@ -151,13 +174,18 @@ function renderTurn(content, role = "agent") {
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
-  avatar.textContent = role === "user" ? "你" : "AI";
+  avatar.textContent = role === "user" ? "你" : ASSISTANT_LABEL;
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  const paragraph = document.createElement("p");
-  paragraph.textContent = content;
-  bubble.appendChild(paragraph);
+  const body = document.createElement("div");
+  body.className = "message-content";
+  if (role === "agent") {
+    renderMarkdown(body, content);
+  } else {
+    body.textContent = content;
+  }
+  bubble.appendChild(body);
 
   turn.appendChild(avatar);
   turn.appendChild(bubble);
@@ -191,9 +219,9 @@ function addAssistantStreamTurn() {
   status.className = "thinking-status";
   status.textContent = "Submitting task";
 
-  const text = document.createElement("p");
+  const text = document.createElement("div");
   text.className = "stream-text";
-  text.textContent = "";
+  text.innerHTML = "";
 
   bubble.appendChild(status);
   bubble.appendChild(text);
@@ -212,7 +240,7 @@ function hideThinking(streamTurn) {
 
 function appendAnswerDelta(streamTurn, delta) {
   streamTurn.answer += delta;
-  streamTurn.text.textContent = streamTurn.answer;
+  renderMarkdown(streamTurn.text, streamTurn.answer);
   hideThinking(streamTurn);
   scrollToBottom();
 }
@@ -331,7 +359,7 @@ inputEl.addEventListener("keydown", (event) => {
 
 apiBaseEl.addEventListener("change", checkApi);
 newChatButtonEl.addEventListener("click", () => {
-  activeSessionId = null;
+  setActiveSession(null);
   renderConversations();
   renderEmptyState();
   inputEl.focus();
