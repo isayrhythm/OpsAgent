@@ -171,10 +171,17 @@
   text-underline-offset: 2px;
 }
 
+.thinking-row {
+  display: flex;
+  min-height: 1.55em;
+  align-items: center;
+  margin: 0;
+}
+
 .thinking-status {
   display: inline-block;
   min-height: 1.55em;
-  margin: 0 0 6px;
+  margin: 0;
   background: linear-gradient(90deg, #8a8a82, #111, #8a8a82);
   background-size: 220% 100%;
   color: transparent;
@@ -197,6 +204,26 @@
   opacity: 0;
   pointer-events: none;
   transform: translateY(-4px);
+}
+
+.token-meter,
+.token-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.token-meter {
+  margin: 8px 0 0;
+}
+
+.thinking-row.answering {
+  display: none;
+}
+
+.token-meta {
+  margin-top: 8px;
 }
 
 .stream-text {

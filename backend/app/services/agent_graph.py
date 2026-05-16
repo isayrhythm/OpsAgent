@@ -20,6 +20,7 @@ class AgentState(TypedDict, total=False):
     message: str
     history: list[ChatHistoryMessage]
     skills: list[SkillSpec]
+    resolved_message: str
     skill_name: str | None
     skill_output: dict[str, Any]
     answer: str
@@ -50,22 +51,23 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
     async def route_node(state: AgentState) -> AgentState:
         await emit("progress", 3, "正在路由请求", None)
         skills = state.get("skills", [])
-        skill = await route_skill(state["message"], skills, llm)
+        decision = await route_skill(state["message"], skills, llm, state.get("history", []))
+        skill = decision.skill
         if skill is None:
             await emit("progress", 4, "使用普通对话模式", None)
-            return {"skill_name": None, "skills": []}
+            return {"skill_name": None, "resolved_message": decision.resolved_message, "skills": []}
         await emit(
             "progress",
             4,
             "正在调用专门能力",
             None,
         )
-        return {"skill_name": skill.name, "skills": [load_skill(skill.path)]}
+        return {"skill_name": skill.name, "resolved_message": decision.resolved_message, "skills": [load_skill(skill.path)]}
 
     async def execute_node(state: AgentState) -> AgentState:
-        await emit("progress", 5, "正在处理数据", None)
         skill = state["skills"][0]
-        skill_output = await execute_skill(state["message"], skill, llm)
+        await emit("progress", 5, f"正在调用 {skill.name} 智能体", None)
+        skill_output = await execute_skill(state.get("resolved_message", state["message"]), skill, llm, emit)
         return {"skill_output": skill_output}
 
     async def answer_node(state: AgentState) -> AgentState:
@@ -106,6 +108,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     "content": json.dumps(
                         {
                             "user_message": state["message"],
+                            "resolved_message": state.get("resolved_message", state["message"]),
                             "history": [
                                 {"role": item.role, "content": item.content}
                                 for item in state.get("history", [])[-12:]

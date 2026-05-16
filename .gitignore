@@ -7,5 +7,7 @@ venv/
 node_modules/
 .downloads/
 .runtime/
+logs/
+data/gene_info/
 .pdm-python
 .pdm-build/

@@ -7,13 +7,15 @@ import csv
 import io
 import json
 import textwrap
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 
+
+Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
 
 FORBIDDEN_IMPORTS = {"os", "subprocess", "shutil", "socket", "pathlib"}
 FORBIDDEN_NAMES = {"eval", "exec", "compile", "open", "__import__"}
@@ -69,30 +71,35 @@ def _query_gene_expression_locally(message: str) -> dict[str, Any]:
     return {"records": filtered, "count": len(filtered)}
 
 
-async def generate_skill_code(message: str, skill: SkillSpec, llm: DeepSeekClient) -> str:
+async def generate_skill_code(message: str, skill: SkillSpec, llm: DeepSeekClient, emit: Emit | None = None) -> str:
     if not llm.available:
         raise RuntimeError("DEEPSEEK_API_KEY is not configured")
 
-    response = await llm.chat(
-        [
-            {
-                "role": "system",
-                "content": CODE_GENERATOR_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"项目根目录: {PROJECT_ROOT}\n"
-                    f"数据目录: {DATA_DIR}\n"
-                    f"用户请求: {message}\n\n"
-                    f"Skill 定义:\n{skill.content}"
-                ),
-            },
-        ],
+    messages = [
+        {
+            "role": "system",
+            "content": CODE_GENERATOR_SYSTEM_PROMPT,
+        },
+        {
+            "role": "user",
+            "content": (
+                f"项目根目录: {PROJECT_ROOT}\n"
+                f"数据目录: {DATA_DIR}\n"
+                f"用户请求: {message}\n\n"
+                f"Skill 定义:\n{skill.content}"
+            ),
+        },
+    ]
+    response = ""
+    async for delta in llm.stream_chat(
+        messages,
         model=llm.settings.code_model,
         temperature=0,
         max_tokens=2000,
-    )
+    ):
+        response += delta
+        if emit is not None:
+            await emit("thinking_delta", 5, f"正在调用 {skill.name} 智能体", {"delta": delta, "delta_length": len(delta)})
     return _strip_code_fence(response)
 
 
@@ -149,14 +156,14 @@ def _execute_code_sync(code: str) -> Any:
     return result
 
 
-async def execute_skill(message: str, skill: SkillSpec, llm: DeepSeekClient) -> dict[str, Any]:
+async def execute_skill(message: str, skill: SkillSpec, llm: DeepSeekClient, emit: Emit | None = None) -> dict[str, Any]:
     if not llm.available and skill.name == "query_gene_expression":
         return {
             "mode": "local_fallback",
             "result": _query_gene_expression_locally(message),
         }
 
-    code = await generate_skill_code(message, skill, llm)
+    code = await generate_skill_code(message, skill, llm, emit)
     result = await asyncio.wait_for(
         asyncio.to_thread(_execute_code_sync, code),
         timeout=EXECUTION_TIMEOUT_SECONDS,

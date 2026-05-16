@@ -22,10 +22,12 @@ const md = window.markdownit({
 });
 
 const suggestions = [
-  "查询 AT1G00001 在 leaf 和 root 的表达量",
-  "AT1G00003 在所有组织的表达量是多少？",
-  "比较 AT1G00002 和 AT1G00004 在 flower 的表达量",
-  "查询拟南芥基因表达数据里 root 组织的记录",
+  "查询水稻 LOC_Os09g03110 的基因信息",
+  "不指定物种查询 LOC_Os09g03110，告诉我命中的物种和标准 ID",
+  "不指定物种查询 ABF1，请分别列出水稻、玉米、大豆命中的标准 ID 和匹配来源",
+  "Zm00001eb000020 这个玉米基因有什么功能注释？",
+  "Glyma.15G027500 的大豆基因基本信息是什么？",
+  "把 GmW82.15G028400 转换成标准大豆基因 ID 并查询信息",
 ];
 
 let sessions = loadSessions();
@@ -87,12 +89,37 @@ function updateSessionTitle(session) {
   session.updatedAt = Date.now();
 }
 
-function addMessageToSession(role, content, sessionId = activeSessionId) {
+function addMessageToSession(role, content, sessionId = activeSessionId, meta = {}) {
   const session = sessions.find((item) => item.id === sessionId) ?? createSession(content);
-  session.messages.push({role, content, createdAt: Date.now()});
+  session.messages.push({role, content, createdAt: Date.now(), ...meta});
   updateSessionTitle(session);
   saveSessions();
   renderConversations();
+}
+
+function textSize(value) {
+  const text = String(value ?? "");
+  const cjkCount = (text.match(/[\u3400-\u9fff\uf900-\ufaff]/g) ?? []).length;
+  const asciiText = text.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, "");
+  const asciiCount = (asciiText.match(/[A-Za-z0-9_.,;:!?()[\]{}'"`~@#$%^&*+=/\\|-]/g) ?? []).length;
+  return Math.ceil(cjkCount * 0.6 + asciiCount / 4);
+}
+
+function usageFromParts(input, history, output = "") {
+  const inputTokens = textSize(input);
+  const historyTokens = history.reduce((total, item) => total + textSize(item.content), 0);
+  const outputTokens = textSize(output);
+  return {
+    input: inputTokens,
+    history: historyTokens,
+    internal: 0,
+    output: outputTokens,
+    total: inputTokens + historyTokens + outputTokens,
+  };
+}
+
+function usageLabel(usage) {
+  return `${usage.total} tokens`;
 }
 
 function renderConversations() {
@@ -167,7 +194,18 @@ function renderMarkdown(target, content) {
   target.innerHTML = md.render(content);
 }
 
-function renderTurn(content, role = "agent") {
+function renderUsageMeta(bubble, usage) {
+  if (!usage) {
+    return;
+  }
+  const meta = document.createElement("div");
+  meta.className = "token-meta";
+  meta.textContent = usageLabel(usage);
+  meta.title = `输入 ${usage.input} / 历史 ${usage.history} / 调用 ${usage.internal ?? 0} / 输出 ${usage.output}`;
+  bubble.appendChild(meta);
+}
+
+function renderTurn(content, role = "agent", meta = {}) {
   const thread = ensureThread();
   const turn = document.createElement("article");
   turn.className = `turn ${role}`;
@@ -186,6 +224,9 @@ function renderTurn(content, role = "agent") {
     body.textContent = content;
   }
   bubble.appendChild(body);
+  if (role === "agent") {
+    renderUsageMeta(bubble, meta.usage);
+  }
 
   turn.appendChild(avatar);
   turn.appendChild(bubble);
@@ -206,26 +247,47 @@ function renderCurrentSession() {
   thread.className = "thread";
   messagesEl.appendChild(thread);
   for (const message of session.messages) {
-    renderTurn(message.content, message.role);
+    renderTurn(message.content, message.role, message);
   }
   scrollToBottom();
 }
 
-function addAssistantStreamTurn() {
+function addAssistantStreamTurn(usage) {
   const bubble = renderTurn("", "agent");
   bubble.textContent = "";
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "thinking-row";
 
   const status = document.createElement("div");
   status.className = "thinking-status";
   status.textContent = "Submitting task";
 
+  const tokenMeter = document.createElement("div");
+  tokenMeter.className = "token-meter";
+  tokenMeter.textContent = usageLabel(usage);
+  tokenMeter.title = `输入 ${usage.input} / 历史 ${usage.history} / 调用 ${usage.internal ?? 0} / 输出 ${usage.output}`;
+
   const text = document.createElement("div");
   text.className = "stream-text";
   text.innerHTML = "";
 
-  bubble.appendChild(status);
+  statusRow.appendChild(status);
+  bubble.appendChild(statusRow);
   bubble.appendChild(text);
-  return {bubble, status, text, answer: ""};
+  bubble.appendChild(tokenMeter);
+  return {bubble, status, statusRow, tokenMeter, text, answer: "", usage};
+}
+
+function updateTokenMeter(streamTurn) {
+  streamTurn.tokenMeter.textContent = usageLabel(streamTurn.usage);
+  streamTurn.tokenMeter.title = `输入 ${streamTurn.usage.input} / 历史 ${streamTurn.usage.history} / 调用 ${streamTurn.usage.internal ?? 0} / 输出 ${streamTurn.usage.output}`;
+}
+
+function addInternalUsage(streamTurn, amount) {
+  streamTurn.usage.internal = (streamTurn.usage.internal ?? 0) + amount;
+  streamTurn.usage.total = streamTurn.usage.input + streamTurn.usage.history + streamTurn.usage.internal + streamTurn.usage.output;
+  updateTokenMeter(streamTurn);
 }
 
 function updateThinking(streamTurn, text, kind = "active") {
@@ -236,10 +298,14 @@ function updateThinking(streamTurn, text, kind = "active") {
 
 function hideThinking(streamTurn) {
   streamTurn.status.classList.add("is-hidden");
+  streamTurn.statusRow.classList.add("answering");
 }
 
 function appendAnswerDelta(streamTurn, delta) {
   streamTurn.answer += delta;
+  streamTurn.usage.output = textSize(streamTurn.answer);
+  streamTurn.usage.total = streamTurn.usage.input + streamTurn.usage.history + (streamTurn.usage.internal ?? 0) + streamTurn.usage.output;
+  updateTokenMeter(streamTurn);
   renderMarkdown(streamTurn.text, streamTurn.answer);
   hideThinking(streamTurn);
   scrollToBottom();
@@ -275,19 +341,25 @@ function listenToTask(eventsUrl, streamTurn, sessionId) {
     appendAnswerDelta(streamTurn, payload.data?.delta ?? "");
   });
 
+  source.addEventListener("thinking_delta", (event) => {
+    const payload = JSON.parse(event.data);
+    const amount = payload.data?.delta ? textSize(payload.data.delta) : Math.ceil((payload.data?.delta_length ?? 0) / 3);
+    addInternalUsage(streamTurn, amount);
+  });
+
   source.addEventListener("result", (event) => {
     const payload = JSON.parse(event.data);
     const answer = payload.data.answer || JSON.stringify(payload.data, null, 2);
     if (!streamTurn.answer) {
       appendAnswerDelta(streamTurn, answer);
     }
-    addMessageToSession("agent", answer, sessionId);
+    addMessageToSession("agent", answer, sessionId, {usage: streamTurn.usage});
   });
 
   source.addEventListener("error", (event) => {
     const text = event.data ? JSON.parse(event.data).status : "SSE connection failed";
     updateThinking(streamTurn, text, "error");
-    addMessageToSession("agent", `请求失败：${text}`, sessionId);
+    addMessageToSession("agent", `请求失败：${text}`, sessionId, {usage: streamTurn.usage});
     sendButtonEl.disabled = false;
     source.close();
   });
@@ -313,13 +385,14 @@ async function submitMessage(message) {
     role: item.role === "agent" ? "assistant" : item.role,
     content: item.content,
   }));
+  const usage = usageFromParts(text, history);
 
   renderTurn(text, "user");
   addMessageToSession("user", text, sessionId);
   inputEl.value = "";
   resizeComposer();
   sendButtonEl.disabled = true;
-  const streamTurn = addAssistantStreamTurn();
+  const streamTurn = addAssistantStreamTurn(usage);
 
   try {
     const response = await fetch(`${apiBase()}/api/chat`, {
@@ -334,7 +407,7 @@ async function submitMessage(message) {
     listenToTask(payload.events_url, streamTurn, sessionId);
   } catch (error) {
     updateThinking(streamTurn, `Request failed: ${error.message}`, "error");
-    addMessageToSession("agent", `请求失败：${error.message}`, sessionId);
+    addMessageToSession("agent", `请求失败：${error.message}`, sessionId, {usage: streamTurn.usage});
     sendButtonEl.disabled = false;
   }
 }
