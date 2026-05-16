@@ -15,11 +15,57 @@ const USER_ID_KEY = "opsagent.user_id.v1";
 const ASSISTANT_LABEL = "Ops";
 const userId = localStorage.getItem(USER_ID_KEY) || crypto.randomUUID();
 localStorage.setItem(USER_ID_KEY, userId);
-const md = window.markdownit({
-  html: false,
-  linkify: true,
+marked.setOptions({
+  async: false,
   breaks: false,
+  gfm: true,
+  mangle: false,
+  headerIds: false,
 });
+const ALLOWED_MARKDOWN_TAGS = new Set([
+  "a",
+  "blockquote",
+  "br",
+  "code",
+  "del",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "strong",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+const ALLOWED_MARKDOWN_ATTRS = {
+  a: new Set(["href", "title"]),
+  code: new Set(["class"]),
+  td: new Set(["align"]),
+  th: new Set(["align"]),
+};
+const COPY_ICON = `
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+    <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+  </svg>
+`;
+const CHECK_ICON = `
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path d="m5 12 4 4L19 6"></path>
+  </svg>
+`;
 
 const suggestions = [
   "查询水稻 LOC_Os09g03110 的基因信息",
@@ -109,17 +155,44 @@ function usageFromParts(input, history, output = "") {
   const inputTokens = textSize(input);
   const historyTokens = history.reduce((total, item) => total + textSize(item.content), 0);
   const outputTokens = textSize(output);
-  return {
+  return normalizeUsage({
     input: inputTokens,
     history: historyTokens,
     internal: 0,
     output: outputTokens,
-    total: inputTokens + historyTokens + outputTokens,
+  });
+}
+
+function normalizeUsage(usage, cumulativeBase = usage?.cumulativeBase ?? 0) {
+  const normalized = {
+    input: Number(usage?.input ?? 0),
+    history: Number(usage?.history ?? 0),
+    internal: Number(usage?.internal ?? 0),
+    output: Number(usage?.output ?? 0),
+    cumulativeBase: Number(cumulativeBase ?? 0),
   };
+  normalized.total = normalized.input + normalized.history + normalized.internal + normalized.output;
+  normalized.cumulative = normalized.cumulativeBase + normalized.total;
+  return normalized;
+}
+
+function previousSessionUsageTotal(session) {
+  return (session?.messages ?? []).reduce((total, message) => {
+    if (message.role !== "agent" || !message.usage) {
+      return total;
+    }
+    return total + Number(message.usage.total ?? 0);
+  }, 0);
 }
 
 function usageLabel(usage) {
-  return `${usage.total} tokens`;
+  const normalized = normalizeUsage(usage);
+  return `本轮 ${normalized.total} / 累计 ${normalized.cumulative} tokens`;
+}
+
+function usageTitle(usage) {
+  const normalized = normalizeUsage(usage);
+  return `估算 tokens：本轮 ${normalized.total} / 累计 ${normalized.cumulative}。输入 ${normalized.input} / 历史 ${normalized.history} / 调用 ${normalized.internal} / 输出 ${normalized.output}`;
 }
 
 function renderConversations() {
@@ -191,18 +264,98 @@ function scrollToBottom() {
 }
 
 function renderMarkdown(target, content) {
-  target.innerHTML = md.render(content);
+  target.innerHTML = sanitizeMarkdownHtml(marked.parse(String(content ?? "")));
+  for (const link of target.querySelectorAll("a[href]")) {
+    link.target = "_blank";
+    link.rel = "noreferrer noopener";
+  }
 }
 
-function renderUsageMeta(bubble, usage) {
+function sanitizeMarkdownHtml(html) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  for (const element of [...template.content.querySelectorAll("*")]) {
+    const tagName = element.tagName.toLowerCase();
+    if (!ALLOWED_MARKDOWN_TAGS.has(tagName)) {
+      element.replaceWith(...element.childNodes);
+      continue;
+    }
+
+    const allowedAttrs = ALLOWED_MARKDOWN_ATTRS[tagName] ?? new Set();
+    for (const attr of [...element.attributes]) {
+      const attrName = attr.name.toLowerCase();
+      if (!allowedAttrs.has(attrName)) {
+        element.removeAttribute(attr.name);
+      }
+    }
+
+    if (tagName === "a") {
+      const href = element.getAttribute("href") ?? "";
+      if (!/^(https?:|mailto:|#|\/)/i.test(href)) {
+        element.removeAttribute("href");
+      }
+    }
+  }
+  return template.innerHTML;
+}
+
+async function copyText(text, button) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.className = "copy-fallback";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    setCopyButtonState(button, true);
+    button.classList.add("copied");
+    window.setTimeout(() => {
+      setCopyButtonState(button, false);
+      button.classList.remove("copied");
+    }, 1200);
+  } catch {
+    button.setAttribute("aria-label", "复制失败");
+    button.title = "复制失败";
+    window.setTimeout(() => {
+      setCopyButtonState(button, false);
+    }, 1200);
+  }
+}
+
+function setCopyButtonState(button, copied = false) {
+  button.innerHTML = copied ? CHECK_ICON : COPY_ICON;
+  button.setAttribute("aria-label", copied ? "已复制" : "复制消息");
+  button.title = copied ? "已复制" : "复制消息";
+}
+
+function createCopyActions(getText) {
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "copy-button icon-copy-button";
+  setCopyButtonState(button);
+  button.addEventListener("click", () => copyText(getText(), button));
+  actions.appendChild(button);
+  return actions;
+}
+
+function renderUsageMeta(target, usage) {
   if (!usage) {
     return;
   }
+  const normalized = normalizeUsage(usage);
   const meta = document.createElement("div");
   meta.className = "token-meta";
-  meta.textContent = usageLabel(usage);
-  meta.title = `输入 ${usage.input} / 历史 ${usage.history} / 调用 ${usage.internal ?? 0} / 输出 ${usage.output}`;
-  bubble.appendChild(meta);
+  meta.textContent = usageLabel(normalized);
+  meta.title = usageTitle(normalized);
+  target.appendChild(meta);
 }
 
 function renderTurn(content, role = "agent", meta = {}) {
@@ -224,12 +377,17 @@ function renderTurn(content, role = "agent", meta = {}) {
     body.textContent = content;
   }
   bubble.appendChild(body);
+
+  const footer = document.createElement("div");
+  footer.className = "message-footer";
   if (role === "agent") {
-    renderUsageMeta(bubble, meta.usage);
+    renderUsageMeta(footer, meta.usage);
   }
+  footer.appendChild(createCopyActions(() => content));
 
   turn.appendChild(avatar);
   turn.appendChild(bubble);
+  turn.appendChild(footer);
   thread.appendChild(turn);
   scrollToBottom();
   return bubble;
@@ -246,14 +404,21 @@ function renderCurrentSession() {
   const thread = document.createElement("div");
   thread.className = "thread";
   messagesEl.appendChild(thread);
+  let cumulativeBase = 0;
   for (const message of session.messages) {
-    renderTurn(message.content, message.role, message);
+    const meta = {...message};
+    if (message.role === "agent" && message.usage) {
+      meta.usage = normalizeUsage(message.usage, cumulativeBase);
+      cumulativeBase += meta.usage.total;
+    }
+    renderTurn(message.content, message.role, meta);
   }
   scrollToBottom();
 }
 
 function addAssistantStreamTurn(usage) {
   const bubble = renderTurn("", "agent");
+  bubble.parentElement?.querySelector(".message-footer")?.remove();
   bubble.textContent = "";
 
   const statusRow = document.createElement("div");
@@ -266,7 +431,7 @@ function addAssistantStreamTurn(usage) {
   const tokenMeter = document.createElement("div");
   tokenMeter.className = "token-meter";
   tokenMeter.textContent = usageLabel(usage);
-  tokenMeter.title = `输入 ${usage.input} / 历史 ${usage.history} / 调用 ${usage.internal ?? 0} / 输出 ${usage.output}`;
+  tokenMeter.title = usageTitle(usage);
 
   const text = document.createElement("div");
   text.className = "stream-text";
@@ -275,18 +440,24 @@ function addAssistantStreamTurn(usage) {
   statusRow.appendChild(status);
   bubble.appendChild(statusRow);
   bubble.appendChild(text);
-  bubble.appendChild(tokenMeter);
-  return {bubble, status, statusRow, tokenMeter, text, answer: "", usage};
+  const streamTurn = {bubble, status, statusRow, tokenMeter, text, answer: "", usage};
+  streamTurn.activeAgents = new Map();
+  const footer = document.createElement("div");
+  footer.className = "message-footer";
+  footer.appendChild(tokenMeter);
+  footer.appendChild(createCopyActions(() => streamTurn.answer));
+  bubble.after(footer);
+  return streamTurn;
 }
 
 function updateTokenMeter(streamTurn) {
+  streamTurn.usage = normalizeUsage(streamTurn.usage);
   streamTurn.tokenMeter.textContent = usageLabel(streamTurn.usage);
-  streamTurn.tokenMeter.title = `输入 ${streamTurn.usage.input} / 历史 ${streamTurn.usage.history} / 调用 ${streamTurn.usage.internal ?? 0} / 输出 ${streamTurn.usage.output}`;
+  streamTurn.tokenMeter.title = usageTitle(streamTurn.usage);
 }
 
 function addInternalUsage(streamTurn, amount) {
   streamTurn.usage.internal = (streamTurn.usage.internal ?? 0) + amount;
-  streamTurn.usage.total = streamTurn.usage.input + streamTurn.usage.history + streamTurn.usage.internal + streamTurn.usage.output;
   updateTokenMeter(streamTurn);
 }
 
@@ -294,6 +465,39 @@ function updateThinking(streamTurn, text, kind = "active") {
   streamTurn.status.textContent = text;
   streamTurn.status.className = `thinking-status ${kind}`;
   scrollToBottom();
+}
+
+function agentDisplayName(name) {
+  return String(name ?? "").trim();
+}
+
+function updateAgentThinking(streamTurn, payload) {
+  const agent = agentDisplayName(payload.data?.agent);
+  const state = payload.data?.agent_state;
+  if (!agent || !state) {
+    updateThinking(streamTurn, payload.status);
+    return;
+  }
+
+  if (state === "done") {
+    streamTurn.activeAgents.delete(agent);
+  } else {
+    streamTurn.activeAgents.set(agent, Boolean(payload.data?.retry));
+  }
+
+  const agents = [...streamTurn.activeAgents.entries()];
+  if (!agents.length) {
+    updateThinking(streamTurn, payload.status);
+    return;
+  }
+  if (agents.length === 1) {
+    const [name, isRetry] = agents[0];
+    updateThinking(streamTurn, isRetry ? `正在重新调用 ${name} 智能体` : `正在调用 ${name} 智能体`);
+    return;
+  }
+
+  const names = agents.map(([name, isRetry]) => (isRetry ? `${name}(重试)` : name)).join("、");
+  updateThinking(streamTurn, `正在调用 ${agents.length} 个智能体：${names}`);
 }
 
 function hideThinking(streamTurn) {
@@ -304,7 +508,6 @@ function hideThinking(streamTurn) {
 function appendAnswerDelta(streamTurn, delta) {
   streamTurn.answer += delta;
   streamTurn.usage.output = textSize(streamTurn.answer);
-  streamTurn.usage.total = streamTurn.usage.input + streamTurn.usage.history + (streamTurn.usage.internal ?? 0) + streamTurn.usage.output;
   updateTokenMeter(streamTurn);
   renderMarkdown(streamTurn.text, streamTurn.answer);
   hideThinking(streamTurn);
@@ -333,7 +536,7 @@ function listenToTask(eventsUrl, streamTurn, sessionId) {
 
   source.addEventListener("progress", (event) => {
     const payload = JSON.parse(event.data);
-    updateThinking(streamTurn, payload.status);
+    updateAgentThinking(streamTurn, payload);
   });
 
   source.addEventListener("answer_delta", (event) => {
@@ -385,7 +588,7 @@ async function submitMessage(message) {
     role: item.role === "agent" ? "assistant" : item.role,
     content: item.content,
   }));
-  const usage = usageFromParts(text, history);
+  const usage = normalizeUsage(usageFromParts(text, history), previousSessionUsageTotal(currentSession()));
 
   renderTurn(text, "user");
   addMessageToSession("user", text, sessionId);

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Awaitable, Callable, TypedDict
 
@@ -7,8 +8,9 @@ from langgraph.graph import END, StateGraph
 
 from backend.app.llm.prompts import FINAL_ANSWER_SYSTEM_PROMPT, GENERAL_CHAT_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage
-from backend.app.services.code_executor import execute_skill
+from backend.app.services.code_executor import SkillCodeExecutionError, execute_skill, retry_skill
 from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.services.result_evaluator import compact_value, evaluate_skill_result
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec, load_skill, load_skill_catalog
 
@@ -22,7 +24,9 @@ class AgentState(TypedDict, total=False):
     skills: list[SkillSpec]
     resolved_message: str
     skill_name: str | None
+    skill_names: list[str]
     skill_output: dict[str, Any]
+    skill_outputs: list[dict[str, Any]]
     answer: str
 
 
@@ -52,28 +56,156 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         await emit("progress", 3, "正在路由请求", None)
         skills = state.get("skills", [])
         decision = await route_skill(state["message"], skills, llm, state.get("history", []))
-        skill = decision.skill
-        if skill is None:
+        selected_skills = decision.skills
+        if not selected_skills:
             await emit("progress", 4, "使用普通对话模式", None)
-            return {"skill_name": None, "resolved_message": decision.resolved_message, "skills": []}
+            return {"skill_name": None, "skill_names": [], "resolved_message": decision.resolved_message, "skills": []}
         await emit(
             "progress",
             4,
             "正在调用专门能力",
             None,
         )
-        return {"skill_name": skill.name, "resolved_message": decision.resolved_message, "skills": [load_skill(skill.path)]}
+        loaded_skills = [load_skill(skill.path) for skill in selected_skills]
+        return {
+            "skill_name": loaded_skills[0].name,
+            "skill_names": [skill.name for skill in loaded_skills],
+            "resolved_message": decision.resolved_message,
+            "skills": loaded_skills,
+        }
+
+    async def run_one_skill(skill: SkillSpec, state: AgentState) -> dict[str, Any]:
+        resolved_message = state.get("resolved_message", state["message"])
+        await emit("progress", 5, f"正在调用 {skill.name} 智能体", {"agent": skill.name, "agent_state": "running"})
+        try:
+            skill_output = await execute_skill(resolved_message, skill, llm, emit)
+            evaluation = await evaluate_skill_result(
+                user_message=state["message"],
+                resolved_message=resolved_message,
+                skill=skill,
+                result=skill_output.get("result"),
+                llm=llm,
+            )
+        except Exception as exc:
+            first_error = str(exc)
+            first_code = exc.code if isinstance(exc, SkillCodeExecutionError) else None
+            evaluation = await evaluate_skill_result(
+                user_message=state["message"],
+                resolved_message=resolved_message,
+                skill=skill,
+                result=None,
+                llm=llm,
+                error=first_error,
+            )
+            if evaluation.get("category") != "retry_code":
+                await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+                raise
+            await emit(
+                "progress",
+                5,
+                f"正在重新调用 {skill.name} 智能体",
+                {"agent": skill.name, "agent_state": "running", "retry": True, "reason": evaluation.get("reason")},
+            )
+            try:
+                skill_output = await retry_skill(
+                    resolved_message,
+                    skill,
+                    llm,
+                    previous_code=first_code,
+                    previous_error=first_error,
+                    evaluation=evaluation,
+                    emit=emit,
+                )
+            except Exception as retry_exc:
+                retry_code = retry_exc.code if isinstance(retry_exc, SkillCodeExecutionError) else None
+                await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+                return {
+                    "skill_name": skill.name,
+                    "output": {
+                        "mode": "retry_failed",
+                        "result": None,
+                        "error": str(retry_exc),
+                        "code": retry_code,
+                        "evaluation": {
+                            "category": "not_found",
+                            "answered": False,
+                            "reason": "重试后仍未能得到可用结果",
+                            "missing": ["valid_skill_result"],
+                        },
+                    }
+                }
+            evaluation = await evaluate_skill_result(
+                user_message=state["message"],
+                resolved_message=resolved_message,
+                skill=skill,
+                result=skill_output.get("result"),
+                llm=llm,
+            )
+            skill_output["evaluation"] = evaluation
+            await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+            return {"skill_name": skill.name, "output": skill_output}
+
+        if evaluation.get("category") == "retry_code":
+            await emit(
+                "progress",
+                5,
+                f"正在重新调用 {skill.name} 智能体",
+                {"agent": skill.name, "agent_state": "running", "retry": True, "reason": evaluation.get("reason")},
+            )
+            try:
+                skill_output = await retry_skill(
+                    resolved_message,
+                    skill,
+                    llm,
+                    previous_code=skill_output.get("code"),
+                    previous_result=skill_output.get("result"),
+                    evaluation=evaluation,
+                    emit=emit,
+                )
+            except Exception as retry_exc:
+                retry_code = retry_exc.code if isinstance(retry_exc, SkillCodeExecutionError) else None
+                await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+                return {
+                    "skill_name": skill.name,
+                    "output": {
+                        "mode": "retry_failed",
+                        "result": skill_output.get("result"),
+                        "error": str(retry_exc),
+                        "code": retry_code,
+                        "evaluation": {
+                            "category": "partial",
+                            "answered": False,
+                            "reason": "第一次结果不足，重试后仍未能得到更好的可用结果",
+                            "missing": ["valid_retry_result"],
+                        },
+                    }
+                }
+            evaluation = await evaluate_skill_result(
+                user_message=state["message"],
+                resolved_message=resolved_message,
+                skill=skill,
+                result=skill_output.get("result"),
+                llm=llm,
+            )
+        skill_output["evaluation"] = evaluation
+        await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+        return {"skill_name": skill.name, "output": skill_output}
 
     async def execute_node(state: AgentState) -> AgentState:
-        skill = state["skills"][0]
-        await emit("progress", 5, f"正在调用 {skill.name} 智能体", None)
-        skill_output = await execute_skill(state.get("resolved_message", state["message"]), skill, llm, emit)
-        return {"skill_output": skill_output}
+        skills = state.get("skills", [])
+        if not skills:
+            return {"skill_outputs": []}
+        if len(skills) == 1:
+            item = await run_one_skill(skills[0], state)
+            return {"skill_output": item["output"], "skill_outputs": [item]}
+        outputs = await asyncio.gather(*(run_one_skill(skill, state) for skill in skills))
+        return {"skill_output": outputs[0]["output"], "skill_outputs": list(outputs)}
 
     async def answer_node(state: AgentState) -> AgentState:
         await emit("progress", 6, "正在整理最终回复", None)
+        skill_outputs = state.get("skill_outputs", [])
         skill_output = state.get("skill_output")
-        if skill_output is None:
+        if skill_output is None and not skill_outputs:
             if not llm.available:
                 answer = "当前未配置 DEEPSEEK_API_KEY，无法进行普通对话。"
             else:
@@ -96,7 +228,11 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             return {"answer": answer}
 
         if not llm.available:
-            answer = json.dumps(skill_output["result"], ensure_ascii=False, indent=2)
+            answer = json.dumps(
+                skill_outputs if skill_outputs else skill_output["result"],
+                ensure_ascii=False,
+                indent=2,
+            )
         else:
             messages = [
                 {
@@ -114,7 +250,9 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                                 for item in state.get("history", [])[-12:]
                             ],
                             "skill_name": state["skill_name"],
-                            "skill_output": skill_output,
+                            "skill_names": state.get("skill_names", []),
+                            "skill_output": compact_value(skill_output),
+                            "skill_outputs": compact_value(skill_outputs),
                         },
                         ensure_ascii=False,
                     ),
@@ -125,7 +263,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 messages,
                 model=llm.settings.answer_model,
                 temperature=0.2,
-                max_tokens=1000,
+                max_tokens=1800,
             ):
                 answer += delta
                 await emit("answer_delta", 7, "输出中", {"delta": delta})

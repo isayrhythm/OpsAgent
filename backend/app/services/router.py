@@ -10,6 +10,92 @@ from backend.app.llm.prompts import ROUTER_SYSTEM_PROMPT
 from backend.app.services.skill_loader import SkillSpec
 
 
+GENE_ID_PATTERN = re.compile(
+    r"(loc_os\d+g\d+|agis_os\d+g\d+|zm\d+[a-z]*\d+|glyma\.\d+g\d+|gmw82\.\d+g\d+)",
+    re.I,
+)
+GENE_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{2,})(?![A-Za-z0-9_.-])")
+GENE_TOKEN_STOPWORDS = {
+    "annotation",
+    "arabidopsis",
+    "cold",
+    "corn",
+    "evidence",
+    "expression",
+    "function",
+    "gene",
+    "genes",
+    "glycine",
+    "info",
+    "leaf",
+    "maize",
+    "oryza",
+    "query",
+    "rice",
+    "root",
+    "soy",
+    "soybean",
+    "version",
+    "zea",
+    "t2t",
+}
+GENE_INFO_CONTEXT_TERMS = (
+    "基因",
+    "信息",
+    "注释",
+    "功能",
+    "位置",
+    "长度",
+    "证据",
+    "查",
+    "命中",
+    "对应",
+    "相关",
+    "什么",
+    "水稻",
+    "玉米",
+    "大豆",
+    "gene",
+    "annotation",
+    "function",
+    "evidence",
+    "rice",
+    "maize",
+    "soy",
+    "soybean",
+)
+EXPRESSION_CONTEXT_TERMS = ("拟南芥", "表达量", "gene expression")
+EXPLICIT_QUERY_CONSTRAINT_TERMS = (
+    "表达量",
+    "表达证据",
+    "表达",
+    "t2t",
+    "版本",
+    "标准",
+    "位置",
+    "长度",
+    "注释",
+    "功能",
+    "结构域",
+    "转录本",
+    "文献",
+    "性状",
+    "go",
+    "kegg",
+    "expression",
+    "annotation",
+    "function",
+    "domain",
+    "transcript",
+    "version",
+)
+SPECIES_HINTS = (
+    ("水稻", ("水稻", "rice", "oryza", "loc_os", "agis_os")),
+    ("玉米", ("玉米", "maize", "corn", "zea", "zm")),
+    ("大豆", ("大豆", "soy", "soybean", "glycine", "glyma", "gmw82")),
+)
+
+
 FOLLOW_UP_MARKERS = (
     "这个",
     "该",
@@ -32,6 +118,7 @@ FOLLOW_UP_MARKERS = (
 @dataclass(frozen=True)
 class RouteDecision:
     skill: SkillSpec | None
+    skills: list[SkillSpec]
     resolved_message: str
 
 
@@ -58,48 +145,117 @@ def _fallback_resolve_message(message: str, history: list[ChatHistoryMessage]) -
     context = "\n".join(f"{item.role}: {item.content}" for item in recent)
     return (
         "以下是最近对话上下文，仅用于补全当前问题中省略的基因 ID、物种或查询对象；"
-        "必须回答当前用户问题。\n"
+        "必须回答当前用户问题，不要继承历史中的其他并列任务或旧限定条件。\n"
         f"{context}\n"
         f"当前用户问题: {message}"
     )
 
 
-def _fallback_skill(message: str, skills: list[SkillSpec]) -> SkillSpec | None:
+def _dedupe_skills(skills: list[SkillSpec]) -> list[SkillSpec]:
+    seen: set[str] = set()
+    result: list[SkillSpec] = []
+    for skill in skills:
+        if skill.name in seen:
+            continue
+        seen.add(skill.name)
+        result.append(skill)
+    return result
+
+
+def _extract_gene_terms(message: str) -> list[str]:
+    terms: list[str] = []
+    for match in GENE_TOKEN_PATTERN.finditer(message):
+        term = match.group(1).strip(".,;:!?，。；：！？、")
+        if len(term) < 3:
+            continue
+        lowered = term.lower()
+        if lowered in GENE_TOKEN_STOPWORDS:
+            continue
+        terms.append(term)
+    return terms
+
+
+def _mentions_expression_query(message: str) -> bool:
     normalized = message.lower()
-    gene_id_pattern = re.compile(
-        r"(loc_os\d+g\d+|agis_os\d+g\d+|zm\d+[a-z]*\d+|glyma\.\d+g\d+|gmw82\.\d+g\d+)",
-        re.I,
+    return (
+        any(term in message for term in EXPRESSION_CONTEXT_TERMS if not term.isascii())
+        or re.search(r"\bAT\dG\d+\b", message, re.I) is not None
+        or "gene expression" in normalized
     )
-    gene_info_query = bool(gene_id_pattern.search(message)) and any(
-        token in normalized
-        for token in (
-            "基因",
-            "信息",
-            "注释",
-            "功能",
-            "位置",
-            "长度",
-            "证据",
-            "表达",
-            "gene",
-            "annotation",
-            "function",
-            "evidence",
-        )
+
+
+def _mentions_gene_info_query(message: str) -> bool:
+    normalized = message.lower()
+    if GENE_ID_PATTERN.search(message):
+        return any(token in normalized for token in GENE_INFO_CONTEXT_TERMS)
+
+    terms = _extract_gene_terms(message)
+    if not terms:
+        return False
+    has_digit_symbol = any(any(char.isdigit() for char in term) for term in terms)
+    has_context = any(token in normalized for token in GENE_INFO_CONTEXT_TERMS)
+    return has_digit_symbol or has_context
+
+
+def _current_question_has_specific_gene(message: str) -> bool:
+    return GENE_ID_PATTERN.search(message) is not None or bool(_extract_gene_terms(message))
+
+
+def _has_explicit_query_constraint(message: str) -> bool:
+    normalized = message.lower()
+    return any(term in normalized for term in EXPLICIT_QUERY_CONSTRAINT_TERMS)
+
+
+def _is_open_ended_follow_up(message: str) -> bool:
+    normalized = message.lower()
+    return (
+        len(message.strip()) <= 60
+        and any(marker in message for marker in FOLLOW_UP_MARKERS)
+        and not _has_explicit_query_constraint(normalized)
     )
-    if gene_info_query:
+
+
+def _species_hint_from_text(*values: str) -> str:
+    joined = "\n".join(values)
+    normalized = joined.lower()
+    for label, markers in SPECIES_HINTS:
+        if any(marker in normalized for marker in markers):
+            return label
+    return ""
+
+
+def _sanitize_resolved_message(current_message: str, resolved_message: str) -> str:
+    current_terms = _extract_gene_terms(current_message)
+    if not current_terms or not _is_open_ended_follow_up(current_message):
+        return resolved_message
+
+    species_hint = _species_hint_from_text(current_message, resolved_message)
+    species_prefix = f"{species_hint} " if species_hint else ""
+    term_text = "、".join(current_terms)
+    return f"查询{species_prefix}{term_text} 的基因信息和本次查到的命中结果；只回答当前问题：{current_message}"
+
+
+def _filter_stale_skill_selection(selected: list[SkillSpec], current_message: str) -> list[SkillSpec]:
+    if _current_question_has_specific_gene(current_message) and not _mentions_expression_query(current_message):
+        selected = [skill for skill in selected if skill.name != "query_gene_expression"]
+    return _dedupe_skills(selected)
+
+
+def _fallback_skills(message: str, skills: list[SkillSpec]) -> list[SkillSpec]:
+    selected: list[SkillSpec] = []
+    normalized = message.lower()
+
+    if _mentions_gene_info_query(message):
         gene_info_skill = next((skill for skill in skills if skill.name == "query_gene_info"), None)
         if gene_info_skill is not None:
-            return gene_info_skill
+            selected.append(gene_info_skill)
 
     for skill in skills:
         if skill.name.lower() in normalized:
-            return skill
-        if skill.name == "query_gene_expression" and any(
-            token in message for token in ("基因", "表达", "拟南芥", "gene", "expression")
-        ):
-            return skill
-    return None
+            selected.append(skill)
+        if skill.name == "query_gene_expression" and _mentions_expression_query(message):
+            selected.append(skill)
+    return _dedupe_skills(selected)
 
 
 async def route_skill(
@@ -110,11 +266,13 @@ async def route_skill(
 ) -> RouteDecision:
     history = history or []
     if not skills:
-        return RouteDecision(skill=None, resolved_message=message)
+        return RouteDecision(skill=None, skills=[], resolved_message=message)
 
     if not llm.available:
         resolved_message = _fallback_resolve_message(message, history)
-        return RouteDecision(skill=_fallback_skill(resolved_message, skills), resolved_message=resolved_message)
+        resolved_message = _sanitize_resolved_message(message, resolved_message)
+        selected = _filter_stale_skill_selection(_fallback_skills(resolved_message, skills), message)
+        return RouteDecision(skill=selected[0] if selected else None, skills=selected, resolved_message=resolved_message)
 
     catalog = [
         {
@@ -145,7 +303,7 @@ async def route_skill(
                         "output_schema": {
                             "depends_on_history": "boolean",
                             "resolved_message": "string",
-                            "skill_name": "string or null",
+                            "skill_names": ["string"],
                             "reason": "string",
                         },
                     },
@@ -161,19 +319,26 @@ async def route_skill(
         routed = _json_from_text(response)
     except Exception:
         resolved_message = _fallback_resolve_message(message, history)
-        return RouteDecision(skill=_fallback_skill(resolved_message, skills), resolved_message=resolved_message)
+        resolved_message = _sanitize_resolved_message(message, resolved_message)
+        selected = _filter_stale_skill_selection(_fallback_skills(resolved_message, skills), message)
+        return RouteDecision(skill=selected[0] if selected else None, skills=selected, resolved_message=resolved_message)
 
     resolved_message = routed.get("resolved_message")
     if not isinstance(resolved_message, str) or not resolved_message.strip():
         resolved_message = message
     resolved_message = resolved_message.strip()
-    skill_name = routed.get("skill_name")
-    if not isinstance(skill_name, str):
-        return RouteDecision(skill=_fallback_skill(resolved_message, skills), resolved_message=resolved_message)
-    skill = next((skill for skill in skills if skill.name == skill_name), None)
-    deterministic_skill = _fallback_skill(resolved_message, skills)
-    if deterministic_skill is not None and deterministic_skill.name == "query_gene_info":
-        skill = deterministic_skill
-    elif skill is None:
-        skill = deterministic_skill
-    return RouteDecision(skill=skill, resolved_message=resolved_message)
+    resolved_message = _sanitize_resolved_message(message, resolved_message)
+    skill_names = routed.get("skill_names")
+    if not isinstance(skill_names, list):
+        skill_name = routed.get("skill_name")
+        skill_names = [skill_name] if isinstance(skill_name, str) else []
+    selected = [
+        skill
+        for name in skill_names
+        if isinstance(name, str)
+        for skill in skills
+        if skill.name == name
+    ]
+    deterministic = _fallback_skills(resolved_message, skills)
+    selected = _filter_stale_skill_selection([*deterministic, *selected], message)
+    return RouteDecision(skill=selected[0] if selected else None, skills=selected, resolved_message=resolved_message)

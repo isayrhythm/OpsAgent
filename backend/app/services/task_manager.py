@@ -72,7 +72,9 @@ class TaskManager:
                 "完成",
                 {
                     "skill": result.get("skill_name"),
+                    "skills": result.get("skill_names") or ([result.get("skill_name")] if result.get("skill_name") else []),
                     "skill_output": result.get("skill_output"),
+                    "skill_outputs": result.get("skill_outputs"),
                     "answer": answer,
                     "mode": "skill" if result.get("skill_name") else "chat",
                 },
