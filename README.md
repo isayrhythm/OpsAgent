@@ -34,9 +34,9 @@ OPSAGENT_MEMORY_DIR=memory
 ## 启动后端
 
 ```powershell
-pdm use 3.11
-pdm install
-pdm run api
+python -m pdm use 3.11
+python -m pdm install
+python -m pdm run api
 ```
 
 如果本机还没有 Python 3.11，需要先安装 Python 3.11，再执行上面的命令。当前项目要求 `requires-python = ">=3.11"`。
@@ -46,14 +46,14 @@ pdm run api
 前端是静态页面，可以直接打开 `frontend/index.html`。如果浏览器限制本地文件请求，可以在项目根目录启动一个静态服务：
 
 ```powershell
-pdm run web
+python -m pdm run web
 ```
 
 然后访问 `http://127.0.0.1:5173`。
 
 ## API
 
-- `GET /api/health`：健康检查。
+- `GET http://127.0.0.1:8001/api/health`：健康检查。
 - `GET /api/skills`：实时扫描并返回当前 Skill 列表。
 - `POST /api/chat`：创建聊天任务，返回 `task_id` 和 SSE 地址。
 - `GET /api/tasks/{task_id}/events`：监听任务进度和最终结果。
