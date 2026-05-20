@@ -48,7 +48,10 @@
         <section id="messages" class="messages" aria-live="polite"></section>
 
         <div class="composer-wrap">
+          <div id="attachmentTray" class="attachment-tray" aria-live="polite"></div>
           <form id="chatForm" class="composer">
+            <button id="attachButton" class="attach-button" type="button" aria-label="上传文件" title="上传文件">+</button>
+            <input id="fileInput" type="file" multiple hidden />
             <textarea
               id="messageInput"
               rows="1"

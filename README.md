@@ -55,8 +55,11 @@ python -m pdm run web
 
 - `GET http://127.0.0.1:8001/api/health`：健康检查。
 - `GET /api/skills`：实时扫描并返回当前 Skill 列表。
+- `POST /api/uploads`：上传文件到短期记忆目录，返回文件 ID、文件名、类型、大小和保存路径。
 - `POST /api/chat`：创建聊天任务，返回 `task_id` 和 SSE 地址。
 - `GET /api/tasks/{task_id}/events`：监听任务进度和最终结果。
+
+上传文件不会把完整文件内容塞进模型上下文。聊天请求只携带附件元信息，例如 `file_id`、`filename`、`content_type`、`size` 和后端保存路径。需要读取文件内容时，应由专门 Skill 根据路径处理。
 
 ## Skill 约定
 

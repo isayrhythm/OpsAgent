@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import BinaryIO
 
 from backend.app.config import MEMORY_DIR
-from backend.app.schemas import ChatHistoryMessage
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 
 
 def _safe_segment(value: str) -> str:
@@ -31,6 +34,9 @@ class MemoryPaths:
 
     def uploads_dir(self, user_id: str) -> Path:
         return self.user_short_root(user_id) / "uploads"
+
+    def upload_session_dir(self, user_id: str, session_id: str) -> Path:
+        return self.uploads_dir(user_id) / _safe_segment(session_id)
 
     def long_term_profile_path(self, user_id: str) -> Path:
         return self.root / "long_term" / _safe_segment(user_id) / "profile.json"
@@ -79,3 +85,32 @@ class MemoryStore:
             ]
         )
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def save_upload(
+        self,
+        user_id: str,
+        session_id: str,
+        filename: str,
+        content_type: str | None,
+        source: BinaryIO,
+    ) -> UploadedFileSummary:
+        self.ensure_user_dirs(user_id)
+        upload_dir = self.paths.upload_session_dir(user_id, session_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = _safe_segment(Path(filename or "upload").name)
+        file_id = uuid.uuid4().hex
+        target = upload_dir / f"{file_id}_{safe_name}"
+        with target.open("wb") as handle:
+            shutil.copyfileobj(source, handle)
+
+        summary = UploadedFileSummary(
+            file_id=file_id,
+            filename=Path(filename or "upload").name,
+            content_type=content_type,
+            size=target.stat().st_size,
+            path=str(target),
+        )
+        metadata_path = upload_dir / f"{file_id}.json"
+        metadata_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+        return summary

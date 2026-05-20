@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary
+from backend.app.memory.store import MemoryStore
+from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
 from backend.app.services.skill_loader import load_skills
 from backend.app.services.task_manager import TaskManager
 
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 tasks = TaskManager()
+memory = MemoryStore()
 
 
 @app.get("/api/health")
@@ -46,8 +48,27 @@ async def skills() -> list[SkillSummary]:
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    task_id = tasks.create_task(request.message, request.user_id, request.session_id, request.history)
+    task_id = tasks.create_task(
+        request.message,
+        request.user_id,
+        request.session_id,
+        request.history,
+        request.attachments,
+    )
     return ChatResponse(task_id=task_id, events_url=f"/api/tasks/{task_id}/events")
+
+
+@app.post("/api/uploads", response_model=UploadResponse)
+async def upload_files(
+    user_id: str = Form(default="default"),
+    session_id: str = Form(...),
+    files: list[UploadFile] = File(...),
+) -> UploadResponse:
+    saved = [
+        memory.save_upload(user_id, session_id, file.filename or "upload", file.content_type, file.file)
+        for file in files
+    ]
+    return UploadResponse(files=saved)
 
 
 @app.get("/api/tasks/{task_id}/events")

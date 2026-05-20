@@ -10,16 +10,29 @@ class ChatHistoryMessage(BaseModel):
     content: str = Field(min_length=1)
 
 
+class UploadedFileSummary(BaseModel):
+    file_id: str
+    filename: str
+    content_type: str | None = None
+    size: int
+    path: str | None = None
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     user_id: str = Field(default="default", min_length=1)
     session_id: str | None = None
     history: list[ChatHistoryMessage] = Field(default_factory=list)
+    attachments: list[UploadedFileSummary] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
     task_id: str
     events_url: str
+
+
+class UploadResponse(BaseModel):
+    files: list[UploadedFileSummary]
 
 
 class SkillSummary(BaseModel):

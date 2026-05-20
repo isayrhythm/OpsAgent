@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable, TypedDict
 from langgraph.graph import END, StateGraph
 
 from backend.app.llm.prompts import FINAL_ANSWER_SYSTEM_PROMPT, GENERAL_CHAT_SYSTEM_PROMPT
-from backend.app.schemas import ChatHistoryMessage
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.code_executor import SkillCodeExecutionError, execute_skill, retry_skill
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.result_evaluator import compact_value, evaluate_skill_result
@@ -21,6 +21,7 @@ Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
 class AgentState(TypedDict, total=False):
     message: str
     history: list[ChatHistoryMessage]
+    attachments: list[UploadedFileSummary]
     skills: list[SkillSpec]
     resolved_message: str
     skill_name: str | None
@@ -40,6 +41,18 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             messages.append({"role": role, "content": item.content})
         messages.append({"role": "user", "content": state["message"]})
         return messages
+
+    def attachment_context(state: AgentState) -> list[dict[str, Any]]:
+        return [
+            {
+                "file_id": item.file_id,
+                "filename": item.filename,
+                "content_type": item.content_type,
+                "size": item.size,
+                "path": item.path,
+            }
+            for item in state.get("attachments", [])
+        ]
 
     async def load_skill_node(state: AgentState) -> AgentState:
         await emit("progress", 1, "正在理解请求", None)
@@ -214,6 +227,10 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                         "role": "system",
                         "content": GENERAL_CHAT_SYSTEM_PROMPT,
                     },
+                    {
+                        "role": "system",
+                        "content": "当前用户上传文件元信息：" + json.dumps(attachment_context(state), ensure_ascii=False),
+                    },
                     *llm_history_messages(state),
                 ]
                 answer = ""
@@ -249,6 +266,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                                 {"role": item.role, "content": item.content}
                                 for item in state.get("history", [])[-12:]
                             ],
+                            "attachments": attachment_context(state),
                             "skill_name": state["skill_name"],
                             "skill_names": state.get("skill_names", []),
                             "skill_output": compact_value(skill_output),

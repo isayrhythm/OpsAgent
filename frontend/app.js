@@ -3,6 +3,9 @@ const messagesEl = document.querySelector("#messages");
 const formEl = document.querySelector("#chatForm");
 const inputEl = document.querySelector("#messageInput");
 const sendButtonEl = document.querySelector("#sendButton");
+const attachButtonEl = document.querySelector("#attachButton");
+const fileInputEl = document.querySelector("#fileInput");
+const attachmentTrayEl = document.querySelector("#attachmentTray");
 const apiBaseEl = document.querySelector("#apiBase");
 const newChatButtonEl = document.querySelector("#newChatButton");
 const menuButtonEl = document.querySelector("#menuButton");
@@ -121,6 +124,7 @@ function createSession(firstMessage = "") {
     createdAt: now,
     updatedAt: now,
     messages: [],
+    attachments: [],
   };
   sessions.unshift(session);
   setActiveSession(session.id);
@@ -195,6 +199,32 @@ function usageTitle(usage) {
   return `估算 tokens：本轮 ${normalized.total} / 累计 ${normalized.cumulative}。输入 ${normalized.input} / 历史 ${normalized.history} / 调用 ${normalized.internal} / 输出 ${normalized.output}`;
 }
 
+function formatBytes(value) {
+  const bytes = Number(value ?? 0);
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function renderAttachmentTray() {
+  const attachments = currentSession()?.attachments ?? [];
+  attachmentTrayEl.innerHTML = "";
+  attachmentTrayEl.classList.toggle("is-empty", attachments.length === 0);
+  for (const file of attachments) {
+    const chip = document.createElement("div");
+    chip.className = "attachment-chip";
+    chip.title = `${file.filename} (${formatBytes(file.size)})`;
+    chip.innerHTML = `<span></span><small></small>`;
+    chip.querySelector("span").textContent = file.filename;
+    chip.querySelector("small").textContent = formatBytes(file.size);
+    attachmentTrayEl.appendChild(chip);
+  }
+}
+
 function renderConversations() {
   conversationListEl.innerHTML = "";
   if (!sessions.length) {
@@ -215,6 +245,7 @@ function renderConversations() {
       setActiveSession(session.id);
       renderConversations();
       renderCurrentSession();
+      renderAttachmentTray();
       appEl.classList.remove("sidebar-open");
     });
     conversationListEl.appendChild(button);
@@ -397,6 +428,7 @@ function renderCurrentSession() {
   const session = currentSession();
   if (!session || !session.messages.length) {
     renderEmptyState();
+    renderAttachmentTray();
     return;
   }
 
@@ -414,6 +446,7 @@ function renderCurrentSession() {
     renderTurn(message.content, message.role, meta);
   }
   scrollToBottom();
+  renderAttachmentTray();
 }
 
 function addAssistantStreamTurn(usage) {
@@ -584,6 +617,7 @@ async function submitMessage(message) {
     createSession(text);
   }
   const sessionId = activeSessionId;
+  const attachments = currentSession()?.attachments ?? [];
   const history = (currentSession()?.messages ?? []).slice(-20).map((item) => ({
     role: item.role === "agent" ? "assistant" : item.role,
     content: item.content,
@@ -601,7 +635,7 @@ async function submitMessage(message) {
     const response = await fetch(`${apiBase()}/api/chat`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({message: text, user_id: userId, session_id: sessionId, history}),
+      body: JSON.stringify({message: text, user_id: userId, session_id: sessionId, history, attachments}),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -612,6 +646,47 @@ async function submitMessage(message) {
     updateThinking(streamTurn, `Request failed: ${error.message}`, "error");
     addMessageToSession("agent", `请求失败：${error.message}`, sessionId, {usage: streamTurn.usage});
     sendButtonEl.disabled = false;
+  }
+}
+
+async function uploadSelectedFiles(files) {
+  const selected = [...files];
+  if (!selected.length) {
+    return;
+  }
+  if (!currentSession()) {
+    createSession("Uploaded files");
+    renderCurrentSession();
+  }
+
+  const session = currentSession();
+  const formData = new FormData();
+  formData.append("user_id", userId);
+  formData.append("session_id", session.id);
+  for (const file of selected) {
+    formData.append("files", file);
+  }
+
+  attachButtonEl.disabled = true;
+  try {
+    const response = await fetch(`${apiBase()}/api/uploads`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    session.attachments = [...(session.attachments ?? []), ...payload.files];
+    session.updatedAt = Date.now();
+    saveSessions();
+    renderConversations();
+    renderAttachmentTray();
+  } catch (error) {
+    setConnection(`Upload failed: ${error.message}`, false);
+  } finally {
+    attachButtonEl.disabled = false;
+    fileInputEl.value = "";
   }
 }
 
@@ -634,14 +709,18 @@ inputEl.addEventListener("keydown", (event) => {
 });
 
 apiBaseEl.addEventListener("change", checkApi);
+attachButtonEl.addEventListener("click", () => fileInputEl.click());
+fileInputEl.addEventListener("change", () => uploadSelectedFiles(fileInputEl.files));
 newChatButtonEl.addEventListener("click", () => {
   setActiveSession(null);
   renderConversations();
   renderEmptyState();
+  renderAttachmentTray();
   inputEl.focus();
 });
 menuButtonEl.addEventListener("click", () => appEl.classList.toggle("sidebar-open"));
 
 renderConversations();
 renderCurrentSession();
+renderAttachmentTray();
 checkApi();

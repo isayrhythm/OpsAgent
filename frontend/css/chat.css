@@ -378,9 +378,45 @@
     linear-gradient(to top, #fff 72%, rgba(255, 255, 255, 0));
 }
 
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.attachment-tray.is-empty {
+  display: none;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  max-width: min(280px, 100%);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 6px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.attachment-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: 38px minmax(0, 1fr) 38px;
   gap: 10px;
   align-items: end;
   border: 1px solid var(--line-strong);
@@ -393,6 +429,28 @@
 .composer:focus-within {
   border-color: #b8b8b0;
   box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.04);
+}
+
+.attach-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.attach-button:hover {
+  background: var(--surface-hover);
+}
+
+.attach-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 #messageInput {

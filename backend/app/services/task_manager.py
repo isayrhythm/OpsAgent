@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.app.memory.store import MemoryStore
-from backend.app.schemas import ChatHistoryMessage
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.schemas import TaskEvent
 from backend.app.services.agent_graph import build_agent_graph
 from backend.app.services.deepseek_client import DeepSeekClient
@@ -19,6 +19,7 @@ class TaskState:
     user_id: str
     session_id: str | None
     history: list[ChatHistoryMessage]
+    attachments: list[UploadedFileSummary]
     queue: asyncio.Queue[TaskEvent] = field(default_factory=asyncio.Queue)
     done: bool = False
 
@@ -34,9 +35,17 @@ class TaskManager:
         user_id: str,
         session_id: str | None,
         history: list[ChatHistoryMessage],
+        attachments: list[UploadedFileSummary],
     ) -> str:
         task_id = uuid.uuid4().hex
-        state = TaskState(id=task_id, message=message, user_id=user_id, session_id=session_id, history=history)
+        state = TaskState(
+            id=task_id,
+            message=message,
+            user_id=user_id,
+            session_id=session_id,
+            history=history,
+            attachments=attachments,
+        )
         self._tasks[task_id] = state
         asyncio.create_task(self._run(state))
         return task_id
@@ -61,7 +70,9 @@ class TaskManager:
                 status,
                 data,
             ))
-            result = await graph.ainvoke({"message": state.message, "history": state.history})
+            result = await graph.ainvoke(
+                {"message": state.message, "history": state.history, "attachments": state.attachments}
+            )
             answer = result.get("answer") or ""
             if state.session_id and answer:
                 self._memory.append_exchange(state.user_id, state.session_id, state.message, answer)
