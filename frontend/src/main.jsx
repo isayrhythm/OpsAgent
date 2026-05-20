@@ -501,7 +501,7 @@ function App() {
       role: "agent",
       content: "",
       createdAt: Date.now(),
-      status: "Submitting task",
+      status: "正在提交任务",
       streaming: true,
       usage,
     };
@@ -801,11 +801,12 @@ function MessageList({messages}) {
 
 function MessageTurn({message}) {
   const isUser = message.role === "user";
+  const bubbleClass = `bubble ${!isUser && message.status && !message.content ? "thinking-only" : ""}`;
   return (
     <article className={`message-turn ${isUser ? "user" : "agent"}`}>
       {!isUser ? <div className="avatar">Ops</div> : null}
       <div className="message-stack">
-        <div className="bubble">
+        <div className={bubbleClass}>
           {!isUser && message.status ? <ThinkingPill text={message.status} /> : null}
           {isUser ? (
             <p>{message.content}</p>

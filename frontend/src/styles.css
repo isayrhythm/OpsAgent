@@ -141,6 +141,32 @@ button {
   margin-top: 18px;
   padding-right: 2px;
   overflow: auto;
+  scrollbar-color: rgba(92, 86, 77, 0.36) transparent;
+  scrollbar-width: thin;
+}
+
+.conversation-list::-webkit-scrollbar,
+.message-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.conversation-list::-webkit-scrollbar-track,
+.message-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.conversation-list::-webkit-scrollbar-thumb,
+.message-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(92, 86, 77, 0.34);
+  background-clip: padding-box;
+}
+
+.conversation-list::-webkit-scrollbar-thumb:hover,
+.message-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(92, 86, 77, 0.5);
+  background-clip: padding-box;
 }
 
 .conversation-group {
@@ -367,6 +393,8 @@ button {
   min-height: 0;
   overflow-y: auto;
   padding: 8px 22px 18px;
+  scrollbar-color: rgba(92, 86, 77, 0.28) transparent;
+  scrollbar-width: thin;
 }
 
 .thread {
@@ -414,6 +442,14 @@ button {
   padding: 16px 18px;
 }
 
+.bubble.thinking-only {
+  display: inline-flex;
+  align-items: center;
+  min-height: 52px;
+  min-width: 210px;
+  padding: 13px 18px;
+}
+
 .message-turn.user .bubble {
   border-color: rgba(31, 93, 80, 0.14);
   background: var(--accent-soft);
@@ -452,7 +488,7 @@ button {
 .thinking-pill {
   overflow: hidden;
   min-height: 26px;
-  margin-bottom: 4px;
+  margin-bottom: 0;
   border-radius: 999px;
   color: transparent;
   font-size: 13px;
