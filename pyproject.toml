@@ -18,7 +18,18 @@ dependencies = [
 [tool.pdm]
 distribution = false
 
+[tool.pdm.dev-dependencies]
+test = [
+    "pytest>=8.0.0",
+]
+
 [tool.pdm.scripts]
 api = "uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8001"
 web = "python -m http.server 5173 -d frontend"
 check = "python -m compileall backend"
+test = {cmd = "pytest", env = {PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"}}
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = ["--basetemp=.pytest_tmp_run", "-p", "no:cacheprovider"]

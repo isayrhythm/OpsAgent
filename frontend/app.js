@@ -84,6 +84,7 @@ let activeSessionId = localStorage.getItem(ACTIVE_SESSION_KEY);
 if (!sessions.some((session) => session.id === activeSessionId)) {
   activeSessionId = sessions[0]?.id ?? null;
 }
+let openConversationMenuId = null;
 
 function apiBase() {
   return apiBaseEl.value.trim().replace(/\/$/, "");
@@ -100,7 +101,18 @@ function loadSessions() {
 }
 
 function saveSessions() {
+  sortSessions();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 30)));
+}
+
+function sortSessions() {
+  sessions.sort((first, second) => {
+    const pinnedDiff = Number(second.pinnedAt ?? 0) - Number(first.pinnedAt ?? 0);
+    if (pinnedDiff !== 0) {
+      return pinnedDiff;
+    }
+    return Number(second.updatedAt ?? 0) - Number(first.updatedAt ?? 0);
+  });
 }
 
 function setActiveSession(sessionId) {
@@ -123,6 +135,7 @@ function createSession(firstMessage = "") {
     title: firstMessage ? firstMessage.slice(0, 42) : "New chat",
     createdAt: now,
     updatedAt: now,
+    pinnedAt: null,
     messages: [],
     attachments: [],
   };
@@ -145,6 +158,57 @@ function addMessageToSession(role, content, sessionId = activeSessionId, meta = 
   updateSessionTitle(session);
   saveSessions();
   renderConversations();
+}
+
+function renameSession(sessionId) {
+  const session = sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    return;
+  }
+  const nextTitle = window.prompt("重命名会话", session.title || "New chat");
+  if (nextTitle === null) {
+    return;
+  }
+  const trimmed = nextTitle.trim();
+  if (!trimmed) {
+    return;
+  }
+  session.title = trimmed.slice(0, 80);
+  session.updatedAt = Date.now();
+  openConversationMenuId = null;
+  saveSessions();
+  renderConversations();
+}
+
+function togglePinSession(sessionId) {
+  const session = sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    return;
+  }
+  session.pinnedAt = session.pinnedAt ? null : Date.now();
+  session.updatedAt = Date.now();
+  openConversationMenuId = null;
+  saveSessions();
+  renderConversations();
+}
+
+function deleteSession(sessionId) {
+  const session = sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    return;
+  }
+  if (!window.confirm(`删除会话「${session.title || "New chat"}」？`)) {
+    return;
+  }
+  sessions = sessions.filter((item) => item.id !== sessionId);
+  if (activeSessionId === sessionId) {
+    setActiveSession(sessions[0]?.id ?? null);
+  }
+  openConversationMenuId = null;
+  saveSessions();
+  renderConversations();
+  renderCurrentSession();
+  renderAttachmentTray();
 }
 
 function textSize(value) {
@@ -225,7 +289,29 @@ function renderAttachmentTray() {
   }
 }
 
+function conversationGroupLabel(session) {
+  if (session.pinnedAt) {
+    return "置顶";
+  }
+  const updated = new Date(session.updatedAt ?? session.createdAt ?? Date.now());
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfUpdated = new Date(updated.getFullYear(), updated.getMonth(), updated.getDate()).getTime();
+  const dayDiff = Math.floor((startOfToday - startOfUpdated) / 86400000);
+  if (dayDiff <= 0) {
+    return "今天";
+  }
+  if (dayDiff === 1) {
+    return "昨天";
+  }
+  if (dayDiff < 7) {
+    return "7 天内";
+  }
+  return "更早";
+}
+
 function renderConversations() {
+  sortSessions();
   conversationListEl.innerHTML = "";
   if (!sessions.length) {
     const empty = document.createElement("div");
@@ -235,20 +321,75 @@ function renderConversations() {
     return;
   }
 
+  let currentGroup = "";
   for (const session of sessions) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `conversation ${session.id === activeSessionId ? "active" : ""}`;
-    button.textContent = session.title || "New chat";
-    button.title = session.title || "New chat";
-    button.addEventListener("click", () => {
+    const group = conversationGroupLabel(session);
+    if (group !== currentGroup) {
+      currentGroup = group;
+      const heading = document.createElement("div");
+      heading.className = "conversation-group-label";
+      heading.textContent = group;
+      conversationListEl.appendChild(heading);
+    }
+
+    const row = document.createElement("div");
+    row.className = `conversation-row ${session.id === activeSessionId ? "active" : ""}`;
+
+    const titleButton = document.createElement("button");
+    titleButton.type = "button";
+    titleButton.className = "conversation";
+    titleButton.textContent = session.title || "New chat";
+    titleButton.title = session.title || "New chat";
+    titleButton.addEventListener("click", () => {
       setActiveSession(session.id);
+      openConversationMenuId = null;
       renderConversations();
       renderCurrentSession();
       renderAttachmentTray();
       appEl.classList.remove("sidebar-open");
     });
-    conversationListEl.appendChild(button);
+
+    const actions = document.createElement("div");
+    actions.className = "conversation-actions";
+    const menuButton = document.createElement("button");
+    menuButton.type = "button";
+    menuButton.className = "conversation-menu-button";
+    menuButton.textContent = "...";
+    menuButton.setAttribute("aria-label", "会话操作");
+    menuButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openConversationMenuId = openConversationMenuId === session.id ? null : session.id;
+      renderConversations();
+    });
+    actions.appendChild(menuButton);
+
+    if (openConversationMenuId === session.id) {
+      const menu = document.createElement("div");
+      menu.className = "conversation-menu";
+      menu.innerHTML = `
+        <button type="button" data-action="rename">重命名</button>
+        <button type="button" data-action="pin">${session.pinnedAt ? "取消置顶" : "置顶"}</button>
+        <button type="button" data-action="delete" class="danger">删除</button>
+      `;
+      menu.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const action = event.target.closest("button")?.dataset.action;
+        if (action === "rename") {
+          renameSession(session.id);
+        }
+        if (action === "pin") {
+          togglePinSession(session.id);
+        }
+        if (action === "delete") {
+          deleteSession(session.id);
+        }
+      });
+      actions.appendChild(menu);
+    }
+
+    row.appendChild(titleButton);
+    row.appendChild(actions);
+    conversationListEl.appendChild(row);
   }
 }
 
@@ -719,6 +860,12 @@ newChatButtonEl.addEventListener("click", () => {
   inputEl.focus();
 });
 menuButtonEl.addEventListener("click", () => appEl.classList.toggle("sidebar-open"));
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".conversation-actions") && openConversationMenuId) {
+    openConversationMenuId = null;
+    renderConversations();
+  }
+});
 
 renderConversations();
 renderCurrentSession();

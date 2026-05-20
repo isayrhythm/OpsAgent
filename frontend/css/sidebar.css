@@ -94,6 +94,30 @@
   max-height: calc(100dvh - 220px);
 }
 
+.conversation-group-label {
+  margin: 14px 10px 5px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.conversation-group-label:first-child {
+  margin-top: 4px;
+}
+
+.conversation-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  border-radius: 10px;
+}
+
+.conversation-row:hover,
+.conversation-row.active {
+  background: var(--surface-hover);
+}
+
 .conversation {
   display: block;
   overflow: hidden;
@@ -109,9 +133,62 @@
   white-space: nowrap;
 }
 
-.conversation:hover,
-.conversation.active {
+.conversation-actions {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.conversation-menu-button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.conversation-row:hover .conversation-menu-button,
+.conversation-menu-button:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.conversation-menu {
+  position: absolute;
+  z-index: 20;
+  top: 34px;
+  right: 0;
+  display: grid;
+  min-width: 138px;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+
+.conversation-menu button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 9px 10px;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+
+.conversation-menu button:hover {
   background: var(--surface-hover);
+}
+
+.conversation-menu button.danger {
+  color: var(--danger);
 }
 
 .settings-section {

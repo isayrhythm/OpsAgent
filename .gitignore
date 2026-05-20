@@ -9,5 +9,8 @@ node_modules/
 .runtime/
 logs/
 data/gene_info/
+.pytest_cache/
+.pytest_tmp*/
+pytest-cache-files-*/
 .pdm-python
 .pdm-build/
