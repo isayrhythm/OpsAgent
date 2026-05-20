@@ -1,27 +1,29 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec
+
+
+class Settings:
+    router_model = "deepseek-v4-flash"
 
 
 class OfflineLLM:
     available = False
 
 
-class Settings:
-    router_model = "router"
-
-
-class MisroutingLLM:
+class FakeRouterLLM:
     available = True
     settings = Settings()
 
+    def __init__(self, response: str) -> None:
+        self.response = response
+
     async def chat(self, *args, **kwargs):
-        return (
-            '{"resolved_message":"解释一下大模型量化模型是什么，包含 FP32、INT4 和 LLM.int8",'
-            '"skill_names":["query_gene_info"],"reason":"bad route"}'
-        )
+        return self.response
 
 
 def make_skill(name: str, description: str) -> SkillSpec:
@@ -37,51 +39,52 @@ def make_skill(name: str, description: str) -> SkillSpec:
     )
 
 
-def test_fallback_routes_gene_expression_request() -> None:
+def test_model_routes_selected_skill() -> None:
     skill = make_skill("query_gene_expression", "query expression")
+    llm = FakeRouterLLM(
+        '{"resolved_message":"查询 AT1G00001 的表达量","skill_names":["query_gene_expression"],"reason":"needs data"}'
+    )
 
-    decision = asyncio.run(route_skill("查询 AT1G00001 的表达量", [skill], OfflineLLM()))
+    decision = asyncio.run(route_skill("查询 AT1G00001 的表达量", [skill], llm))
 
     assert decision.skill is skill
     assert decision.skills == [skill]
 
 
-def test_fallback_keeps_normal_chat_without_skill() -> None:
-    skill = make_skill("query_gene_expression", "query expression")
+def test_model_empty_skill_names_means_normal_chat() -> None:
+    skill = make_skill("query_gene_info", "query gene info")
+    llm = FakeRouterLLM(
+        '{"resolved_message":"解释一下大模型量化模型是什么","skill_names":[],"reason":"concept explanation"}'
+    )
 
-    decision = asyncio.run(route_skill("你好，介绍一下你自己", [skill], OfflineLLM()))
-
-    assert decision.skill is None
-    assert decision.skills == []
-
-
-def test_quantization_explanation_does_not_route_to_gene_info() -> None:
-    skills = [
-        make_skill("query_gene_expression", "query expression"),
-        make_skill("query_gene_info", "query gene info"),
-    ]
-    message = "解释一下大模型量化模型是什么，涉及 FP32、FP16、INT8、INT4 和 LLM.int8()"
-
-    decision = asyncio.run(route_skill(message, skills, OfflineLLM()))
+    decision = asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))
 
     assert decision.skill is None
     assert decision.skills == []
 
 
-def test_llm_gene_info_misroute_is_filtered_for_normal_chat() -> None:
+def test_model_route_does_not_merge_local_rule_fallback() -> None:
+    skill = make_skill("query_gene_info", "query gene info")
+    llm = FakeRouterLLM(
+        '{"resolved_message":"解释一下大模型量化模型是什么，涉及 FP32、INT4 和 LLM.int8","skill_names":[],"reason":"normal chat"}'
+    )
+
+    decision = asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))
+
+    assert decision.skill is None
+    assert decision.skills == []
+
+
+def test_router_unavailable_raises_instead_of_fallback() -> None:
     skill = make_skill("query_gene_info", "query gene info")
 
-    decision = asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], MisroutingLLM()))
-
-    assert decision.skill is None
-    assert decision.skills == []
+    with pytest.raises(RuntimeError, match="router model is unavailable"):
+        asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], OfflineLLM()))
 
 
-def test_arabidopsis_expression_does_not_route_to_gene_info() -> None:
-    expression = make_skill("query_gene_expression", "query expression")
-    gene_info = make_skill("query_gene_info", "query gene info")
+def test_invalid_router_json_raises_instead_of_fallback() -> None:
+    skill = make_skill("query_gene_info", "query gene info")
+    llm = FakeRouterLLM("not json")
 
-    decision = asyncio.run(route_skill("查询 AT1G00001 在 leaf 和 root 的表达量", [gene_info, expression], OfflineLLM()))
-
-    assert decision.skill is expression
-    assert decision.skills == [expression]
+    with pytest.raises(RuntimeError, match="invalid JSON"):
+        asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))
