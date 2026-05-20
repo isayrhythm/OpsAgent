@@ -4,68 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OpsAgent</title>
-    <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
-    <div class="app">
-      <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark">O</div>
-          <div>
-            <strong>OpsAgent</strong>
-            <span>Agent workspace</span>
-          </div>
-        </div>
-
-        <button id="newChatButton" class="new-chat" type="button">
-          <span>+</span>
-          New chat
-        </button>
-
-        <section class="side-section">
-          <div class="side-heading">
-            <span>Recent</span>
-          </div>
-          <div id="conversationList" class="conversation-list"></div>
-        </section>
-
-        <section class="side-section settings-section">
-          <label for="apiBase">API endpoint</label>
-          <input id="apiBase" value="http://127.0.0.1:8001" autocomplete="off" />
-        </section>
-      </aside>
-
-      <main class="chat">
-        <header class="topbar">
-          <button id="menuButton" class="icon-button" type="button" aria-label="打开侧边栏">☰</button>
-          <div>
-            <strong>OpsAgent</strong>
-            <span id="connectionState">Checking API</span>
-          </div>
-        </header>
-
-        <section id="messages" class="messages" aria-live="polite"></section>
-
-        <div class="composer-wrap">
-          <div id="attachmentTray" class="attachment-tray" aria-live="polite"></div>
-          <form id="chatForm" class="composer">
-            <button id="attachButton" class="attach-button" type="button" aria-label="上传文件" title="上传文件">+</button>
-            <input id="fileInput" type="file" multiple hidden />
-            <textarea
-              id="messageInput"
-              rows="1"
-              placeholder="Message OpsAgent"
-              required
-            ></textarea>
-            <button id="sendButton" class="send-button" type="submit" aria-label="发送">↑</button>
-          </form>
-          <p class="hint">OpsAgent can make mistakes. Check important results.</p>
-        </div>
-      </main>
-    </div>
-
-    <script src="./vendor/marked.min.js"></script>
-    <script src="./app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

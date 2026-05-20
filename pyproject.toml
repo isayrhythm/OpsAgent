@@ -25,7 +25,7 @@ test = [
 
 [tool.pdm.scripts]
 api = "uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8001"
-web = "python -m http.server 5173 -d frontend"
+web = "npm.cmd --prefix frontend run dev"
 check = "python -m compileall backend"
 test = {cmd = "pytest", env = {PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"}}
 
