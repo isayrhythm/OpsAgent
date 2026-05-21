@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.schemas import DetachedFileSummary
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec
 
@@ -112,3 +113,22 @@ def test_router_includes_data_profiles_for_skill_selection() -> None:
     request_messages = llm.calls[0][0][0]
     assert "data_profiles" in request_messages[1]["content"]
     assert "proteomics" in request_messages[1]["content"]
+
+
+def test_router_includes_detached_files_for_current_attachment_state() -> None:
+    skill = make_skill("differential_protein_analysis", "differential protein analysis")
+    llm = FakeRouterLLM('{"skill_names":[],"reason":"file was removed"}')
+
+    decision = asyncio.run(
+        route_skill(
+            "继续分析刚才的文件",
+            [skill],
+            llm,
+            detached_files=[DetachedFileSummary(file_id="file-a", filename="removed.csv")],
+        )
+    )
+
+    assert decision.skill is None
+    request_messages = llm.calls[0][0][0]
+    assert "detached_files" in request_messages[1]["content"]
+    assert "removed.csv" in request_messages[1]["content"]

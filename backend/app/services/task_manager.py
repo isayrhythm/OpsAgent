@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.app.memory.store import MemoryStore
-from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
+from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.schemas import TaskEvent
 from backend.app.services.agent_graph import build_agent_graph
 from backend.app.services.deepseek_client import DeepSeekClient
@@ -20,6 +20,7 @@ class TaskState:
     session_id: str | None
     history: list[ChatHistoryMessage]
     attachments: list[UploadedFileSummary]
+    detached_files: list[DetachedFileSummary]
     queue: asyncio.Queue[TaskEvent] = field(default_factory=asyncio.Queue)
     done: bool = False
 
@@ -36,6 +37,7 @@ class TaskManager:
         session_id: str | None,
         history: list[ChatHistoryMessage],
         attachments: list[UploadedFileSummary],
+        detached_files: list[DetachedFileSummary],
     ) -> str:
         task_id = uuid.uuid4().hex
         state = TaskState(
@@ -45,6 +47,7 @@ class TaskManager:
             session_id=session_id,
             history=history,
             attachments=attachments,
+            detached_files=detached_files,
         )
         self._tasks[task_id] = state
         asyncio.create_task(self._run(state))
@@ -63,8 +66,6 @@ class TaskManager:
                 self._memory.ensure_user_dirs(state.user_id)
                 if not state.history:
                     state.history = self._memory.load_history(state.user_id, state.session_id)
-                if not state.attachments:
-                    state.attachments = self._memory.load_uploads(state.user_id, state.session_id)
             graph = build_agent_graph(llm, lambda event_type, step, status, data=None: self._emit(
                 state,
                 event_type,
@@ -73,7 +74,12 @@ class TaskManager:
                 data,
             ))
             result = await graph.ainvoke(
-                {"message": state.message, "history": state.history, "attachments": state.attachments}
+                {
+                    "message": state.message,
+                    "history": state.history,
+                    "attachments": state.attachments,
+                    "detached_files": state.detached_files,
+                }
             )
             answer = result.get("answer") or ""
             if state.session_id and answer:

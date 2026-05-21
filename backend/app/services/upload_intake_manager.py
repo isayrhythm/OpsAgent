@@ -1,0 +1,73 @@
+from __future__ import annotations
+
+import asyncio
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from backend.app.schemas import TaskEvent, UploadedFileSummary
+from backend.app.services.data_intake import intake_uploaded_file
+
+
+UploadMetadataWriter = Callable[[UploadedFileSummary], None]
+
+
+@dataclass
+class UploadIntakeState:
+    id: str
+    uploads: list[UploadedFileSummary]
+    write_metadata: UploadMetadataWriter
+    queue: asyncio.Queue[TaskEvent] = field(default_factory=asyncio.Queue)
+    done: bool = False
+
+
+class UploadIntakeManager:
+    def __init__(self) -> None:
+        self._tasks: dict[str, UploadIntakeState] = {}
+
+    def create_task(
+        self,
+        uploads: list[UploadedFileSummary],
+        write_metadata: UploadMetadataWriter,
+    ) -> str:
+        task_id = uuid.uuid4().hex
+        state = UploadIntakeState(id=task_id, uploads=uploads, write_metadata=write_metadata)
+        self._tasks[task_id] = state
+        asyncio.create_task(self._run(state))
+        return task_id
+
+    def get(self, task_id: str) -> UploadIntakeState | None:
+        return self._tasks.get(task_id)
+
+    async def _emit(self, state: UploadIntakeState, event_type: str, step: int, status: str, data: Any = None) -> None:
+        await state.queue.put(TaskEvent(type=event_type, step=step, status=status, data=data))
+
+    async def _run(self, state: UploadIntakeState) -> None:
+        ready: list[UploadedFileSummary] = []
+        try:
+            await self._emit(state, "progress", 1, f"已保存 {len(state.uploads)} 个上传文件，开始 intake")
+            for index, item in enumerate(state.uploads, start=1):
+                await self._emit(state, "progress", 2, f"正在 intake {item.filename} ({index}/{len(state.uploads)})")
+                intake = await asyncio.to_thread(intake_uploaded_file, item)
+                ready_item = item.model_copy(update={"intake": intake})
+                await asyncio.to_thread(state.write_metadata, ready_item)
+                ready.append(ready_item)
+                await self._emit(
+                    state,
+                    "progress",
+                    3,
+                    f"{item.filename} intake {intake.get('status', 'completed')}",
+                    {"file_id": item.file_id, "intake_status": intake.get("status", "unknown")},
+                )
+            await self._emit(
+                state,
+                "result",
+                4,
+                "上传文件 intake 完成",
+                {"files": [item.model_dump(mode="json") for item in ready]},
+            )
+        except Exception as exc:
+            await self._emit(state, "error", 999, f"上传文件 intake 失败: {exc}")
+        finally:
+            state.done = True

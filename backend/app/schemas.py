@@ -19,12 +19,18 @@ class UploadedFileSummary(BaseModel):
     intake: dict[str, Any] | None = None
 
 
+class DetachedFileSummary(BaseModel):
+    file_id: str
+    filename: str
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     user_id: str = Field(default="default", min_length=1)
     session_id: str | None = None
     history: list[ChatHistoryMessage] = Field(default_factory=list)
     attachments: list[UploadedFileSummary] = Field(default_factory=list)
+    detached_files: list[DetachedFileSummary] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):
@@ -33,6 +39,8 @@ class ChatResponse(BaseModel):
 
 
 class UploadResponse(BaseModel):
+    task_id: str
+    events_url: str
     files: list[UploadedFileSummary]
 
 

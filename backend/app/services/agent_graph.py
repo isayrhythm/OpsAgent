@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable, TypedDict
 from langgraph.graph import END, StateGraph
 
 from backend.app.llm.prompts import FINAL_ANSWER_SYSTEM_PROMPT, GENERAL_CHAT_SYSTEM_PROMPT
-from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
+from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.services.code_executor import SkillCodeExecutionError, execute_skill, retry_skill
 from backend.app.services.data_intake import (
     ensure_attachment_intakes,
@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
     message: str
     history: list[ChatHistoryMessage]
     attachments: list[UploadedFileSummary]
+    detached_files: list[DetachedFileSummary]
     skills: list[SkillSpec]
     skill_name: str | None
     skill_names: list[str]
@@ -60,6 +61,13 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             for item in state.get("attachments", [])
         ]
 
+    def detached_files_prompt(state: AgentState) -> str:
+        detached = state.get("detached_files", [])
+        if not detached:
+            return ""
+        filenames = "、".join(item.filename for item in detached[-8:])
+        return f"当前对话已卸载文件：{filenames}。这些文件当前不可用；若历史消息说它们还在，以当前附件状态为准。"
+
     async def intake_uploads_node(state: AgentState) -> AgentState:
         attachments = state.get("attachments", [])
         if not attachments:
@@ -90,6 +98,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             llm,
             state.get("history", []),
             state.get("data_profiles", []),
+            state.get("detached_files", []),
         )
         selected_skills = decision.skills
         if not selected_skills:
@@ -267,6 +276,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     {
                         "role": "system",
                         "content": uploaded_files_prompt(state.get("attachments", []))
+                        + ("\n" + detached_files_prompt(state) if detached_files_prompt(state) else "")
                         + "\n路由判断："
                         + state.get("route_reason", ""),
                     },
@@ -305,6 +315,10 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                                 for item in state.get("history", [])[-12:]
                             ],
                             "attachments": attachment_context(state),
+                            "detached_files": [
+                                {"file_id": item.file_id, "filename": item.filename}
+                                for item in state.get("detached_files", [])
+                            ],
                             "data_profiles": state.get("data_profiles", []),
                             "skill_name": state["skill_name"],
                             "skill_names": state.get("skill_names", []),

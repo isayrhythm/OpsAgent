@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
@@ -8,16 +10,16 @@ def test_upload_endpoint_returns_file_metadata(tmp_path, monkeypatch) -> None:
     from backend.app.memory.store import MemoryPaths, MemoryStore
 
     monkeypatch.setattr(main, "memory", MemoryStore(MemoryPaths(root=tmp_path)))
-    client = TestClient(app)
-
-    response = client.post(
-        "/api/uploads",
-        data={"user_id": "user-a", "session_id": "session-a"},
-        files={"files": ("sample.txt", b"hello", "text/plain")},
-    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/uploads",
+            data={"user_id": "user-a", "session_id": "session-a"},
+            files={"files": ("sample.txt", b"hello", "text/plain")},
+        )
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["events_url"].startswith("/api/uploads/")
     assert payload["files"][0]["filename"] == "sample.txt"
     assert payload["files"][0]["content_type"] == "text/plain"
     assert payload["files"][0]["size"] == 5
@@ -30,7 +32,6 @@ def test_upload_endpoint_runs_intake_for_proteomics_matrix(tmp_path, monkeypatch
     from backend.app.memory.store import MemoryPaths, MemoryStore
 
     monkeypatch.setattr(main, "memory", MemoryStore(MemoryPaths(root=tmp_path)))
-    client = TestClient(app)
     matrix = (
         b"Protein.Names,Genes,First.Protein.Description,WT1,WT2,MT1,MT2\n"
         b"P1,G1,protein one,10,11,20,21\n"
@@ -38,14 +39,18 @@ def test_upload_endpoint_runs_intake_for_proteomics_matrix(tmp_path, monkeypatch
         b"P3,G3,protein three,7,8,17,18\n"
     )
 
-    response = client.post(
-        "/api/uploads",
-        data={"user_id": "user-a", "session_id": "session-a"},
-        files={"files": ("proteomics.csv", matrix, "text/csv")},
-    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/uploads",
+            data={"user_id": "user-a", "session_id": "session-a"},
+            files={"files": ("proteomics.csv", matrix, "text/csv")},
+        )
 
-    assert response.status_code == 200
-    intake = response.json()["files"][0]["intake"]
+        assert response.status_code == 200
+        payload = response.json()
+        events = client.get(payload["events_url"]).text.splitlines()
+    result_line = next(line for index, line in enumerate(events) if events[index - 1] == "event: result")
+    intake = json.loads(result_line.removeprefix("data: "))["data"]["files"][0]["intake"]
     assert intake["status"] == "ready"
     assert intake["data_family"] == "proteomics"
     assert intake["sample_groups"] == {"WT": ["WT1", "WT2"], "MT": ["MT1", "MT2"]}
@@ -59,12 +64,13 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     calls = {}
 
     class FakeTasks:
-        def create_task(self, message, user_id, session_id, history, attachments):
+        def create_task(self, message, user_id, session_id, history, attachments, detached_files):
             calls["message"] = message
             calls["user_id"] = user_id
             calls["session_id"] = session_id
             calls["history"] = history
             calls["attachments"] = attachments
+            calls["detached_files"] = detached_files
             return "task-1"
 
     monkeypatch.setattr(main, "tasks", FakeTasks())
@@ -86,6 +92,7 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
                     "path": "memory/path/a.txt",
                 }
             ],
+            "detached_files": [{"file_id": "file-b", "filename": "removed.csv"}],
         },
     )
 
@@ -96,3 +103,4 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     assert calls["session_id"] == "session-a"
     assert calls["history"][0].content == "previous"
     assert calls["attachments"][0].filename == "a.txt"
+    assert calls["detached_files"][0].filename == "removed.csv"

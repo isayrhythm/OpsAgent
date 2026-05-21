@@ -92,6 +92,7 @@ function normalizeSession(session) {
         }))
       : [],
     attachments: Array.isArray(session.attachments) ? session.attachments : [],
+    detachedFiles: Array.isArray(session.detachedFiles) ? session.detachedFiles : [],
   };
 }
 
@@ -126,6 +127,7 @@ function newSession(title = "新对话") {
     pinnedAt: null,
     messages: [],
     attachments: [],
+    detachedFiles: [],
   };
 }
 
@@ -321,6 +323,7 @@ function App() {
   const [input, setInput] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
+  const [uploadStatus, setUploadStatus] = React.useState("");
   const [draggingFiles, setDraggingFiles] = React.useState(false);
   const [userId] = React.useState(loadUserId);
   const messagesRef = React.useRef(null);
@@ -483,6 +486,7 @@ function App() {
     }
 
     setUploading(true);
+    setUploadStatus("正在上传文件");
     try {
       const response = await fetch(`${normalizedApiBase()}/api/uploads`, {
         method: "POST",
@@ -492,11 +496,10 @@ function App() {
         throw new Error(`HTTP ${response.status}`);
       }
       const payload = await response.json();
-      patchSession(session.id, (item) => ({
-        ...item,
-        attachments: [...(item.attachments || []), ...(payload.files || [])],
-      }));
+      setUploadStatus("文件已保存，等待 intake");
+      await listenToUploadIntake(payload.events_url, session.id);
     } catch (error) {
+      setUploadStatus(`上传失败：${error.message}`);
       setConnection({label: `Upload failed: ${error.message}`, ok: false});
     } finally {
       setUploading(false);
@@ -504,6 +507,60 @@ function App() {
         fileInputRef.current.value = "";
       }
     }
+  }
+
+  function listenToUploadIntake(eventsUrl, sessionId) {
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(`${normalizedApiBase()}${eventsUrl}`);
+      let receivedResult = false;
+
+      source.addEventListener("progress", (event) => {
+        const payload = JSON.parse(event.data);
+        setUploadStatus(payload.status || "正在 intake 上传文件");
+      });
+
+      source.addEventListener("result", (event) => {
+        const payload = JSON.parse(event.data);
+        const files = payload.data?.files || [];
+        const uploadedNames = new Set(files.map((file) => file.filename));
+        patchSession(sessionId, (item) => ({
+          ...item,
+          attachments: [...(item.attachments || []), ...files],
+          detachedFiles: (item.detachedFiles || []).filter((file) => !uploadedNames.has(file.filename)),
+        }));
+        receivedResult = true;
+        setUploadStatus(payload.status || "上传文件 intake 完成");
+      });
+
+      source.addEventListener("error", (event) => {
+        const payload = event.data ? JSON.parse(event.data) : {status: "Upload intake SSE connection failed"};
+        source.close();
+        reject(new Error(payload.status));
+      });
+
+      source.addEventListener("end", () => {
+        source.close();
+        if (!receivedResult) {
+          reject(new Error("Upload intake ended without files"));
+          return;
+        }
+        resolve();
+      });
+    });
+  }
+
+  function removeAttachment(sessionId, fileId) {
+    patchSession(sessionId, (item) => {
+      const removed = (item.attachments || []).find((file) => file.file_id === fileId);
+      const detached = removed
+        ? [...(item.detachedFiles || []).filter((file) => file.file_id !== fileId), {file_id: removed.file_id, filename: removed.filename}]
+        : item.detachedFiles || [];
+      return {
+        ...item,
+        attachments: (item.attachments || []).filter((file) => file.file_id !== fileId),
+        detachedFiles: detached.slice(-12),
+      };
+    });
   }
 
   function hasDraggedFiles(event) {
@@ -551,7 +608,7 @@ function App() {
 
   async function submitMessage(message) {
     const text = message.trim();
-    if (!text || submitting) {
+    if (!text || submitting || uploading) {
       return;
     }
 
@@ -589,6 +646,7 @@ function App() {
           session_id: session.id,
           history,
           attachments: session.attachments || [],
+          detached_files: session.detachedFiles || [],
         }),
       });
       if (!response.ok) {
@@ -716,11 +774,13 @@ function App() {
           value={input}
           onChange={setInput}
           onSubmit={submitMessage}
-          disabled={submitting}
+          disabled={submitting || uploading}
           uploading={uploading}
+          uploadStatus={uploadStatus}
           attachments={activeSession?.attachments || []}
           onUploadClick={() => fileInputRef.current?.click()}
           onFiles={uploadFiles}
+          onRemoveFile={(fileId) => activeSession && removeAttachment(activeSession.id, fileId)}
           fileInputRef={fileInputRef}
         />
         {draggingFiles ? <FileDropOverlay uploading={uploading} /> : null}
@@ -985,9 +1045,11 @@ function Composer({
   onSubmit,
   disabled,
   uploading,
+  uploadStatus,
   attachments,
   onUploadClick,
   onFiles,
+  onRemoveFile,
   fileInputRef,
 }) {
   const textareaRef = React.useRef(null);
@@ -1003,12 +1065,22 @@ function Composer({
 
   return (
     <div className="composer-shell">
+      {uploadStatus ? <p className={`upload-status ${uploading ? "running" : ""}`}>{uploadStatus}</p> : null}
       {attachments.length ? (
         <div className="attachment-tray">
           {attachments.map((file) => (
             <div className="attachment-chip" key={file.file_id} title={file.path || file.filename}>
               <span>{file.filename}</span>
               <small>{formatBytes(file.size)}</small>
+              <button
+                className="attachment-remove"
+                type="button"
+                onClick={() => onRemoveFile(file.file_id)}
+                aria-label={`从当前对话卸载 ${file.filename}`}
+                title="从当前对话卸载"
+              >
+                x
+              </button>
             </div>
           ))}
         </div>

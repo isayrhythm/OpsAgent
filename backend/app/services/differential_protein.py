@@ -22,6 +22,7 @@ class DifferentialProteinError(ValueError):
 
 
 ANALYSIS_TIMEOUT_SECONDS = int(os.getenv("OPSAGENT_ANALYSIS_TIMEOUT_SECONDS", "120"))
+PLOTLY_BUNDLE = Path(__file__).resolve().parents[1] / "vendor" / "plotly-3.5.1.min.js"
 
 
 def run_differential_protein_analysis(
@@ -292,6 +293,8 @@ def _write_report(output_dir: Path, intake: dict[str, Any], summary: dict[str, A
     heatmap = _heatmap_payload(matrix, all_results, intake)
     rows = _table_rows(all_results.head(80))
     report_path = output_dir / "report.html"
+    if PLOTLY_BUNDLE.is_file():
+        shutil.copyfile(PLOTLY_BUNDLE, output_dir / "plotly.min.js")
     report_path.write_text(
         _report_html(intake, summary, volcano_points, heatmap, rows),
         encoding="utf-8",
@@ -344,7 +347,61 @@ def _heatmap_payload(matrix: pd.DataFrame, results: pd.DataFrame, intake: dict[s
                 "values": z_values,
             }
         )
-    return {"samples": samples, "rows": payload_rows, "min": -3, "max": 3}
+    payload_rows = _cluster_heatmap_rows(payload_rows)
+    return {"samples": samples, "rows": payload_rows, "min": -3, "max": 3, "row_order": "average_linkage"}
+
+
+def _cluster_heatmap_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(rows) < 3:
+        return rows
+
+    vectors = [_cluster_vector(row["values"]) for row in rows]
+    clusters = [[index] for index in range(len(rows))]
+    while len(clusters) > 1:
+        best_pair = (0, 1)
+        best_distance = float("inf")
+        for left in range(len(clusters)):
+            for right in range(left + 1, len(clusters)):
+                distance = _average_cluster_distance(clusters[left], clusters[right], vectors)
+                if distance < best_distance:
+                    best_distance = distance
+                    best_pair = (left, right)
+        left, right = best_pair
+        first = clusters[left]
+        second = clusters[right]
+        merged = _merge_cluster_order(first, second, vectors)
+        clusters = [cluster for index, cluster in enumerate(clusters) if index not in best_pair]
+        clusters.append(merged)
+    return [rows[index] for index in clusters[0]]
+
+
+def _cluster_vector(values: list[float | None]) -> list[float]:
+    return [0.0 if value is None else float(value) for value in values]
+
+
+def _average_cluster_distance(left: list[int], right: list[int], vectors: list[list[float]]) -> float:
+    distances = [_vector_distance(vectors[left_index], vectors[right_index]) for left_index in left for right_index in right]
+    return sum(distances) / max(len(distances), 1)
+
+
+def _merge_cluster_order(left: list[int], right: list[int], vectors: list[list[float]]) -> list[int]:
+    candidates = [
+        left + right,
+        left + list(reversed(right)),
+        right + left,
+        right + list(reversed(left)),
+    ]
+    return min(
+        candidates,
+        key=lambda order: sum(
+            _vector_distance(vectors[order[index - 1]], vectors[order[index]])
+            for index in range(1, len(order))
+        ),
+    )
+
+
+def _vector_distance(left: list[float], right: list[float]) -> float:
+    return math.sqrt(sum((left_value - right_value) ** 2 for left_value, right_value in zip(left, right)))
 
 
 def _table_rows(results: pd.DataFrame) -> str:
@@ -389,8 +446,9 @@ def _report_html(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Differential Protein Report</title>
   <style>
-    :root {{ --bg:#f6efe4; --panel:#fffdf8; --ink:#1f1d19; --muted:#73685b; --line:#d9cdbb; --up:#c94132; --down:#2f6fab; }}
-    body {{ margin:0; background:linear-gradient(135deg,#f4ead8,#eaf2e8); color:var(--ink); font-family:Georgia, 'Times New Roman', serif; }}
+    :root {{ --bg:#f6efe4; --panel:#fffdf8; --ink:#1f1d19; --muted:#73685b; --line:#d9cdbb; --up:#c94132; --down:#2f6fab; --quiet:#8e877d; }}
+    body {{ margin:0; background:linear-gradient(135deg,#f4ead8,#eaf2e8); color:var(--ink); font-family:'Avenir Next','Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; }}
+    button,input {{ font:inherit; }}
     main {{ max-width:1180px; margin:32px auto; padding:0 24px 48px; }}
     .hero {{ border:1px solid var(--line); background:rgba(255,253,248,.86); border-radius:22px; padding:28px; box-shadow:0 18px 50px rgba(55,41,20,.12); }}
     h1 {{ margin:0 0 8px; font-size:34px; }}
@@ -401,15 +459,20 @@ def _report_html(
     .value {{ font-size:32px; font-weight:700; }}
     .grid {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
     section {{ background:rgba(255,253,248,.9); border:1px solid var(--line); border-radius:20px; padding:20px; margin-top:18px; overflow:auto; }}
-    svg {{ width:100%; height:430px; background:#fffaf1; border-radius:14px; }}
+    .plot {{ width:100%; height:480px; min-height:420px; border-radius:14px; background:#fffaf1; }}
     table {{ width:100%; border-collapse:collapse; font-size:14px; background:#fffdf8; }}
     th,td {{ border-bottom:1px solid var(--line); padding:9px 10px; text-align:left; }}
     th {{ position:sticky; top:0; background:#f3eadb; }}
     .links a {{ display:inline-block; margin:8px 12px 0 0; color:#165c53; font-weight:700; }}
-    .heatmap {{ display:grid; gap:2px; font-size:12px; min-width:720px; }}
-    .hm-row {{ display:grid; grid-template-columns:180px repeat(var(--samples), 34px); gap:2px; align-items:center; }}
-    .hm-cell {{ width:34px; height:20px; border-radius:3px; }}
-    .hm-label {{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+    .chart-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }}
+    .chart-head h2 {{ margin:0; }}
+    .chart-tools {{ display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; color:var(--muted); font-size:13px; }}
+    .chart-tools button,.chart-tools input {{ border:1px solid var(--line); border-radius:999px; background:#fffaf1; color:var(--ink); }}
+    .chart-tools button {{ padding:6px 11px; cursor:pointer; }}
+    .chart-tools button.active {{ border-color:var(--accent,#165c53); background:#dcebe3; color:#15443b; }}
+    .chart-tools input[type="search"] {{ width:150px; padding:7px 12px; }}
+    .selection {{ min-height:22px; margin:10px 2px 0; color:var(--muted); font-size:13px; line-height:1.55; }}
+    .selection strong {{ color:var(--ink); }}
     @media (max-width:900px) {{ .grid,.cards {{ grid-template-columns:1fr; }} }}
   </style>
 </head>
@@ -434,12 +497,26 @@ def _report_html(
 
   <div class="grid">
     <section>
-      <h2>Volcano Plot</h2>
-      <svg id="volcano" viewBox="0 0 760 430"></svg>
+      <div class="chart-head">
+        <h2>Volcano Plot</h2>
+        <div class="chart-tools">
+          <button id="volcanoAll" class="active" type="button">全部点</button>
+          <button id="volcanoDiff" type="button">只看差异</button>
+          <button id="volcanoReset" type="button">重置视图</button>
+        </div>
+      </div>
+      <div id="volcano" class="plot"></div>
+      <div id="volcanoSelection" class="selection">Plotly 火山图支持 hover、框选、缩放和平移；点击节点固定详情。</div>
     </section>
     <section>
-      <h2>Heatmap</h2>
-      <div id="heatmap" class="heatmap"></div>
+      <div class="chart-head">
+        <h2>Heatmap</h2>
+        <div class="chart-tools">
+          <input id="heatmapSearch" type="search" placeholder="筛选蛋白" />
+        </div>
+      </div>
+      <div id="heatmap" class="plot"></div>
+      <div id="heatmapSelection" class="selection">蛋白轴已按 z-score 表达模式做 average-linkage 聚类排序；Plotly 支持 hover、缩放和平移。</div>
     </section>
   </div>
 
@@ -451,49 +528,104 @@ def _report_html(
     </table>
   </section>
 </main>
+<script src="plotly.min.js"></script>
 <script>
 const volcano = {volcano_json};
 const heatmap = {heatmap_json};
-function drawVolcano() {{
-  const svg = document.getElementById('volcano');
-  const width = 760, height = 430, pad = 48;
-  const xs = volcano.map(p => p.x), ys = volcano.map(p => p.y);
-  const maxX = Math.max(1, ...xs.map(Math.abs));
-  const maxY = Math.max(1, ...ys);
-  const sx = x => pad + (x + maxX) / (2 * maxX) * (width - pad * 2);
-  const sy = y => height - pad - y / maxY * (height - pad * 2);
-  svg.innerHTML = `<line x1="${{pad}}" y1="${{height-pad}}" x2="${{width-pad}}" y2="${{height-pad}}" stroke="#b9aa95"/><line x1="${{pad}}" y1="${{pad}}" x2="${{pad}}" y2="${{height-pad}}" stroke="#b9aa95"/>`;
-  for (const p of volcano) {{
-    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    c.setAttribute('cx', sx(p.x)); c.setAttribute('cy', sy(p.y)); c.setAttribute('r', p.regulation === 'not_significant' ? 2.2 : 3.8);
-    c.setAttribute('fill', p.regulation === 'up' ? '#c94132' : p.regulation === 'down' ? '#2f6fab' : '#9a9084');
-    c.setAttribute('opacity', p.regulation === 'not_significant' ? '.45' : '.85');
-    const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    title.textContent = `${{p.name || p.id}} | log2FC=${{p.x.toFixed(3)}} | p=${{p.pvalue.toExponential(2)}}`;
-    c.appendChild(title); svg.appendChild(c);
-  }}
+const plotConfig = {{ responsive:true, displaylogo:false, displayModeBar:false, scrollZoom:true }};
+const plotFont = {{ family:"Avenir Next, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif", color:"#1f1d19" }};
+const plotPaper = {{ paper_bgcolor:"rgba(0,0,0,0)", plot_bgcolor:"#fffaf1", font:plotFont }};
+const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[char]));
+let volcanoDiffOnly = false;
+function volcanoTrace(regulation, color, label, points) {{
+  return {{
+    type:"scattergl",
+    mode:"markers",
+    name:label,
+    x:points.map(point => point.x),
+    y:points.map(point => point.y),
+    text:points.map(point => point.name || point.id),
+    customdata:points.map(point => [point.id, point.fold_change, point.pvalue, point.regulation]),
+    marker:{{ color, size:regulation === "not_significant" ? 5 : 8, opacity:regulation === "not_significant" ? .38 : .82 }},
+    hovertemplate:"<b>%{{text}}</b><br>feature_id=%{{customdata[0]}}<br>log2FC=%{{x:.3f}}<br>-log10(p)=%{{y:.3f}}<br>FC=%{{customdata[1]:.3f}}<br>p=%{{customdata[2]:.3e}}<extra>" + label + "</extra>"
+  }};
 }}
-function color(v) {{
-  if (v === null || Number.isNaN(v)) return '#eee7dc';
-  const t = Math.max(-3, Math.min(3, v));
-  if (t >= 0) return `rgb(${{230}}, ${{Math.round(238 - t*42)}}, ${{Math.round(232 - t*54)}})`;
-  return `rgb(${{Math.round(230 + t*42)}}, ${{Math.round(238 + t*24)}}, ${{245}})`;
+function drawVolcano(resetView = false) {{
+  const shown = volcanoDiffOnly ? volcano.filter(point => point.regulation !== "not_significant") : volcano;
+  const traces = [
+    volcanoTrace("up", "#c94132", "Up", shown.filter(point => point.regulation === "up")),
+    volcanoTrace("down", "#2f6fab", "Down", shown.filter(point => point.regulation === "down")),
+    ...(!volcanoDiffOnly ? [volcanoTrace("not_significant", "#9a9084", "Not significant", shown.filter(point => point.regulation === "not_significant"))] : [])
+  ];
+  const layout = {{
+    ...plotPaper,
+    margin:{{ l:62, r:18, t:12, b:58 }},
+    dragmode:"pan",
+    hovermode:"closest",
+    showlegend:true,
+    legend:{{ orientation:"h", y:1.12 }},
+    xaxis:{{ title:"log2 fold change", zeroline:true, gridcolor:"#eadfce" }},
+    yaxis:{{ title:"-log10 p-value", rangemode:"tozero", gridcolor:"#eadfce" }},
+    uirevision: resetView ? String(Date.now()) : "volcano"
+  }};
+  Plotly.react("volcano", traces, layout, plotConfig);
 }}
 function drawHeatmap() {{
-  const el = document.getElementById('heatmap');
-  el.style.setProperty('--samples', heatmap.samples.length);
-  const header = document.createElement('div');
-  header.className = 'hm-row';
-  header.innerHTML = '<strong>Protein</strong>' + heatmap.samples.map(s => `<strong title="${{s}}">${{s.slice(0,8)}}</strong>`).join('');
-  el.appendChild(header);
-  for (const row of heatmap.rows) {{
-    const div = document.createElement('div');
-    div.className = 'hm-row';
-    div.innerHTML = `<div class="hm-label" title="${{row.name || row.id}}">${{row.name || row.id}}</div>` + row.values.map((v, i) => `<div class="hm-cell" title="${{heatmap.samples[i]}}: ${{v === null ? 'NA' : v.toFixed(2)}}" style="background:${{color(v)}}"></div>`).join('');
-    el.appendChild(div);
+  const selection = document.getElementById('heatmapSelection');
+  const search = document.getElementById('heatmapSearch');
+  function renderRows() {{
+    const query = search.value.trim().toLowerCase();
+    const rows = heatmap.rows.filter(row => !query || `${{row.name}} ${{row.id}}`.toLowerCase().includes(query));
+    const labels = rows.map(row => row.name || row.id);
+    Plotly.react("heatmap", [{{
+      type:"heatmap",
+      x:heatmap.samples,
+      y:labels,
+      z:rows.map(row => row.values),
+      customdata:rows.map(row => heatmap.samples.map(() => row.id)),
+      zmin:-3,
+      zmax:3,
+      colorscale:[[0,"#2f6fab"],[.5,"#f7efe2"],[1,"#c94132"]],
+      colorbar:{{ title:"row z-score" }},
+      hovertemplate:"<b>%{{y}}</b><br>feature_id=%{{customdata}}<br>sample=%{{x}}<br>z-score=%{{z:.3f}}<extra></extra>"
+    }}], {{
+      ...plotPaper,
+      margin:{{ l:180, r:18, t:12, b:72 }},
+      xaxis:{{ title:"Sample", side:"bottom", automargin:true }},
+      yaxis:{{ title:"Clustered protein axis", autorange:"reversed", automargin:true }},
+      uirevision:"heatmap"
+    }}, plotConfig);
+    const plot = document.getElementById("heatmap");
+    plot.removeAllListeners("plotly_click");
+    plot.on("plotly_click", event => {{
+      const point = event.points?.[0];
+      if (!point) return;
+    selection.innerHTML = `<strong>${{esc(point.y)}}</strong> | feature_id=${{esc(point.customdata)}} | sample=${{esc(point.x)}} | z-score=${{Number(point.z).toFixed(3)}}`;
+    }});
   }}
+  search.oninput = renderRows;
+  renderRows();
 }}
+document.getElementById("volcanoAll").onclick = () => {{
+  volcanoDiffOnly = false;
+  document.getElementById("volcanoAll").classList.add("active");
+  document.getElementById("volcanoDiff").classList.remove("active");
+  drawVolcano();
+}};
+document.getElementById("volcanoDiff").onclick = () => {{
+  volcanoDiffOnly = true;
+  document.getElementById("volcanoDiff").classList.add("active");
+  document.getElementById("volcanoAll").classList.remove("active");
+  drawVolcano();
+}};
+document.getElementById("volcanoReset").onclick = () => drawVolcano(true);
 drawVolcano(); drawHeatmap();
+document.getElementById("volcano").on("plotly_click", event => {{
+  const point = event.points?.[0];
+  if (!point) return;
+  const data = point.customdata;
+  document.getElementById("volcanoSelection").innerHTML = `<strong>${{esc(point.text)}}</strong> | feature_id=${{esc(data[0])}} | log2FC=${{Number(point.x).toFixed(3)}} | FC=${{data[1] == null ? "NA" : Number(data[1]).toFixed(3)}} | p=${{Number(data[2]).toExponential(3)}} | ${{esc(data[3])}}`;
+}});
 </script>
 </body>
 </html>"""

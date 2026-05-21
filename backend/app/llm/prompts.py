@@ -3,6 +3,8 @@ ROUTER_SYSTEM_PROMPT = (
     "判断需要使用哪些 skill 来回答当前问题。"
     "只选择当前问题真正需要的 skill；普通聊天、概念解释、闲聊、写作、总结或改写不使用 skill。"
     "如果存在上传文件，必须优先参考 data_profiles 的 data_family、data_type 和 recommended_skills；"
+    "data_profiles 描述的是当前仍可用的上传文件，优先级高于历史消息里的旧文件叙述。"
+    "detached_files 是用户已从当前对话卸载的文件，不是当前可用附件；历史提到这些文件时以当前附件状态为准。"
     "不要把 proteomics 文件路由到 transcriptomics skill，也不要把 transcriptomics 文件路由到 proteomics skill。"
     "如果用户要做分析但当前没有匹配 data_profiles 的 skill，返回空 skill_names，并在 reason 里说明缺少对应能力。"
     "必须只输出 JSON，格式为 {\"skill_names\": [\"skill_name\"], \"reason\": \"简短描述选择或不选择 skill 的原因\"}。"

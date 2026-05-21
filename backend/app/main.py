@@ -8,10 +8,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
-from backend.app.services.data_intake import intake_uploaded_file
 from backend.app.services.differential_protein import DifferentialProteinError, artifact_path
 from backend.app.services.skill_loader import load_skills
 from backend.app.services.task_manager import TaskManager
+from backend.app.services.upload_intake_manager import UploadIntakeManager
 
 
 app = FastAPI(title="OpsAgent API", version="0.1.0")
@@ -24,6 +24,7 @@ app.add_middleware(
 )
 
 tasks = TaskManager()
+upload_intakes = UploadIntakeManager()
 memory = MemoryStore()
 
 
@@ -56,6 +57,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         request.session_id,
         request.history,
         request.attachments,
+        request.detached_files,
     )
     return ChatResponse(task_id=task_id, events_url=f"/api/tasks/{task_id}/events")
 
@@ -69,11 +71,9 @@ async def upload_files(
     saved = []
     for file in files:
         summary = memory.save_upload(user_id, session_id, file.filename or "upload", file.content_type, file.file)
-        intake = await asyncio.to_thread(intake_uploaded_file, summary)
-        summary = summary.model_copy(update={"intake": intake})
-        memory.update_upload_metadata(summary)
         saved.append(summary)
-    return UploadResponse(files=saved)
+    task_id = upload_intakes.create_task(saved, memory.update_upload_metadata)
+    return UploadResponse(task_id=task_id, events_url=f"/api/uploads/{task_id}/events", files=saved)
 
 
 @app.get("/api/tasks/{task_id}/events")
@@ -81,6 +81,27 @@ async def task_events(task_id: str) -> StreamingResponse:
     state = tasks.get(task_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    async def stream():
+        while True:
+            if state.done and state.queue.empty():
+                yield "event: end\ndata: {}\n\n"
+                break
+            try:
+                event = await asyncio.wait_for(state.queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield "event: ping\ndata: {}\n\n"
+                continue
+            yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.get("/api/uploads/{task_id}/events")
+async def upload_intake_events(task_id: str) -> StreamingResponse:
+    state = upload_intakes.get(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Upload intake task not found")
 
     async def stream():
         while True:

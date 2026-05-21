@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 
 from backend.app.llm.prompts import ROUTER_SYSTEM_PROMPT
-from backend.app.schemas import ChatHistoryMessage
+from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 
@@ -45,6 +45,7 @@ async def route_skill(
     llm: DeepSeekClient,
     history: list[ChatHistoryMessage] | None = None,
     data_profiles: list[dict[str, object]] | None = None,
+    detached_files: list[DetachedFileSummary] | None = None,
 ) -> RouteDecision:
     history = history or []
     if not skills:
@@ -78,6 +79,10 @@ async def route_skill(
                             for item in history[-8:]
                         ],
                         "data_profiles": data_profiles or [],
+                        "detached_files": [
+                            {"file_id": item.file_id, "filename": item.filename}
+                            for item in (detached_files or [])
+                        ],
                         "skills": catalog,
                         "output_schema": {
                             "skill_names": ["string"],
