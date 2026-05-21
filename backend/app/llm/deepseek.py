@@ -23,6 +23,7 @@ class DeepSeekClient:
         model: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 2000,
+        response_format: dict[str, str] | None = None,
     ) -> str:
         if not self.available:
             raise RuntimeError("DEEPSEEK_API_KEY is not configured")
@@ -34,6 +35,8 @@ class DeepSeekClient:
             "max_tokens": max_tokens,
             "thinking": {"type": "disabled"},
         }
+        if response_format is not None:
+            payload["response_format"] = response_format
         headers = {"Authorization": f"Bearer {self.settings.api_key}"}
 
         async with httpx.AsyncClient(timeout=60) as client:

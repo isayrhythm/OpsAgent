@@ -1,4 +1,5 @@
 import React from "react";
+import {createPortal} from "react-dom";
 import {createRoot} from "react-dom/client";
 import {marked} from "marked";
 
@@ -18,6 +19,8 @@ const API_BASE_KEY = "opsagent.api_base.v1";
 const DEFAULT_API_BASE = "http://127.0.0.1:8001";
 const ASSISTANT_NAME = "OpsAgent";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MENU_WIDTH = 172;
+const MENU_HEIGHT = 156;
 
 const ALLOWED_MARKDOWN_TAGS = new Set([
   "a",
@@ -223,8 +226,22 @@ function sanitizeMarkdown(html) {
   return template.innerHTML;
 }
 
+function normalizeMarkdown(content) {
+  return String(content || "")
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((part) => {
+      if (part.startsWith("`")) {
+        return part;
+      }
+      return part
+        .replace(/\*\*([^*\n]*?\S[^*\n]*?)\s*\*\*/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`)
+        .replace(/__([^_\n]*?\S[^_\n]*?)\s*__/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`);
+    })
+    .join("");
+}
+
 function renderMarkdown(content) {
-  return sanitizeMarkdown(marked.parse(String(content || "")));
+  return sanitizeMarkdown(marked.parse(normalizeMarkdown(content)));
 }
 
 function groupLabel(session) {
@@ -669,6 +686,25 @@ function Sidebar({
   onApiBaseChange,
   onCheckApi,
 }) {
+  const [menuPosition, setMenuPosition] = React.useState(null);
+  const activeMenuSession = sessions.find((session) => session.id === openMenuId) || null;
+
+  React.useEffect(() => {
+    if (!openMenuId) {
+      setMenuPosition(null);
+    }
+  }, [openMenuId]);
+
+  function handleToggleMenu(event, sessionId) {
+    event.stopPropagation();
+    if (openMenuId === sessionId) {
+      setMenuPosition(null);
+    } else {
+      setMenuPosition(getConversationMenuPosition(event.currentTarget));
+    }
+    onToggleMenu(sessionId);
+  }
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -700,10 +736,7 @@ function Sidebar({
                     className="conversation-more"
                     type="button"
                     aria-label="会话操作"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onToggleMenu(session.id);
-                    }}
+                    onClick={(event) => handleToggleMenu(event, session.id)}
                   >
                     <span />
                     <span />
@@ -746,7 +779,52 @@ function Sidebar({
           </button>
         </div>
       </div>
+      {activeMenuSession && menuPosition ? (
+        <ConversationMenuPortal
+          session={activeMenuSession}
+          position={menuPosition}
+          onRename={onRename}
+          onTogglePin={onTogglePin}
+          onDelete={onDelete}
+        />
+      ) : null}
     </aside>
+  );
+}
+
+function getConversationMenuPosition(anchor) {
+  const rect = anchor.getBoundingClientRect();
+  const left = Math.max(12, Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 12));
+  const opensUp = rect.bottom + 8 + MENU_HEIGHT > window.innerHeight - 12;
+  const top = opensUp ? Math.max(12, rect.top - MENU_HEIGHT - 8) : rect.bottom + 8;
+  return {left, top};
+}
+
+function ConversationMenuPortal({session, position, onRename, onTogglePin, onDelete}) {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="conversation-menu conversation-menu-floating"
+      style={{left: `${position.left}px`, top: `${position.top}px`}}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button type="button" onClick={() => onRename(session.id)}>
+        <PencilIcon />
+        重命名
+      </button>
+      <button type="button" onClick={() => onTogglePin(session.id)}>
+        <PinIcon />
+        {session.pinnedAt ? "取消置顶" : "置顶"}
+      </button>
+      <button className="danger" type="button" onClick={() => onDelete(session.id)}>
+        <TrashIcon />
+        删除
+      </button>
+    </div>,
+    document.body,
   );
 }
 

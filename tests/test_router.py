@@ -42,7 +42,7 @@ def make_skill(name: str, description: str) -> SkillSpec:
 def test_model_routes_selected_skill() -> None:
     skill = make_skill("query_gene_expression", "query expression")
     llm = FakeRouterLLM(
-        '{"resolved_message":"查询 AT1G00001 的表达量","skill_names":["query_gene_expression"],"reason":"needs data"}'
+        '{"skill_names":["query_gene_expression"],"reason":"needs data"}'
     )
 
     decision = asyncio.run(route_skill("查询 AT1G00001 的表达量", [skill], llm))
@@ -54,7 +54,7 @@ def test_model_routes_selected_skill() -> None:
 def test_model_empty_skill_names_means_normal_chat() -> None:
     skill = make_skill("query_gene_info", "query gene info")
     llm = FakeRouterLLM(
-        '{"resolved_message":"解释一下大模型量化模型是什么","skill_names":[],"reason":"concept explanation"}'
+        '{"skill_names":[],"reason":"concept explanation"}'
     )
 
     decision = asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))
@@ -66,7 +66,7 @@ def test_model_empty_skill_names_means_normal_chat() -> None:
 def test_model_route_does_not_merge_local_rule_fallback() -> None:
     skill = make_skill("query_gene_info", "query gene info")
     llm = FakeRouterLLM(
-        '{"resolved_message":"解释一下大模型量化模型是什么，涉及 FP32、INT4 和 LLM.int8","skill_names":[],"reason":"normal chat"}'
+        '{"skill_names":[],"reason":"normal chat"}'
     )
 
     decision = asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))

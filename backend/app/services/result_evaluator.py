@@ -148,6 +148,7 @@ async def evaluate_skill_result(
             model=llm.settings.router_model,
             temperature=0,
             max_tokens=500,
+            response_format={"type": "json_object"},
         )
         evaluated = _json_from_text(response)
     except Exception:

@@ -14,7 +14,7 @@ from backend.app.services.skill_loader import SkillSpec
 class RouteDecision:
     skill: SkillSpec | None
     skills: list[SkillSpec]
-    resolved_message: str
+    reason: str
 
 
 def _json_from_text(text: str) -> dict[str, object]:
@@ -47,7 +47,7 @@ async def route_skill(
 ) -> RouteDecision:
     history = history or []
     if not skills:
-        return RouteDecision(skill=None, skills=[], resolved_message=message)
+        return RouteDecision(skill=None, skills=[], reason="No skills available")
     if not llm.available:
         raise RuntimeError("DeepSeek router model is unavailable; cannot route request")
 
@@ -78,8 +78,6 @@ async def route_skill(
                         ],
                         "skills": catalog,
                         "output_schema": {
-                            "depends_on_history": "boolean",
-                            "resolved_message": "string",
                             "skill_names": ["string"],
                             "reason": "string",
                         },
@@ -91,21 +89,20 @@ async def route_skill(
         model=llm.settings.router_model,
         temperature=0,
         max_tokens=500,
+        response_format={"type": "json_object"},
     )
     try:
         routed = _json_from_text(response)
     except Exception as exc:
         raise RuntimeError(f"DeepSeek router returned invalid JSON: {response}") from exc
 
-    resolved_message = routed.get("resolved_message")
-    if not isinstance(resolved_message, str) or not resolved_message.strip():
-        resolved_message = message
-    resolved_message = resolved_message.strip()
-
     skill_names = routed.get("skill_names")
     if not isinstance(skill_names, list):
         skill_name = routed.get("skill_name")
         skill_names = [skill_name] if isinstance(skill_name, str) else []
+    reason = routed.get("reason")
+    if not isinstance(reason, str):
+        reason = ""
 
     selected = [
         skill
@@ -115,4 +112,4 @@ async def route_skill(
         if skill.name == name
     ]
     selected = _dedupe_skills(selected)
-    return RouteDecision(skill=selected[0] if selected else None, skills=selected, resolved_message=resolved_message)
+    return RouteDecision(skill=selected[0] if selected else None, skills=selected, reason=reason)

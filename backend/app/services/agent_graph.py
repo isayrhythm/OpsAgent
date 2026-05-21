@@ -23,7 +23,6 @@ class AgentState(TypedDict, total=False):
     history: list[ChatHistoryMessage]
     attachments: list[UploadedFileSummary]
     skills: list[SkillSpec]
-    resolved_message: str
     skill_name: str | None
     skill_names: list[str]
     skill_output: dict[str, Any]
@@ -72,7 +71,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         selected_skills = decision.skills
         if not selected_skills:
             await emit("progress", 4, "使用普通对话模式", None)
-            return {"skill_name": None, "skill_names": [], "resolved_message": decision.resolved_message, "skills": []}
+            return {"skill_name": None, "skill_names": [], "skills": []}
         await emit(
             "progress",
             4,
@@ -83,18 +82,16 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         return {
             "skill_name": loaded_skills[0].name,
             "skill_names": [skill.name for skill in loaded_skills],
-            "resolved_message": decision.resolved_message,
             "skills": loaded_skills,
         }
 
     async def run_one_skill(skill: SkillSpec, state: AgentState) -> dict[str, Any]:
-        resolved_message = state.get("resolved_message", state["message"])
         await emit("progress", 5, f"正在调用 {skill.name} 智能体", {"agent": skill.name, "agent_state": "running"})
         try:
-            skill_output = await execute_skill(resolved_message, skill, llm, emit)
+            skill_output = await execute_skill(state["message"], skill, llm, emit)
             evaluation = await evaluate_skill_result(
                 user_message=state["message"],
-                resolved_message=resolved_message,
+                resolved_message=state["message"],
                 skill=skill,
                 result=skill_output.get("result"),
                 llm=llm,
@@ -104,7 +101,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             first_code = exc.code if isinstance(exc, SkillCodeExecutionError) else None
             evaluation = await evaluate_skill_result(
                 user_message=state["message"],
-                resolved_message=resolved_message,
+                resolved_message=state["message"],
                 skill=skill,
                 result=None,
                 llm=llm,
@@ -121,7 +118,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             )
             try:
                 skill_output = await retry_skill(
-                    resolved_message,
+                    state["message"],
                     skill,
                     llm,
                     previous_code=first_code,
@@ -149,7 +146,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 }
             evaluation = await evaluate_skill_result(
                 user_message=state["message"],
-                resolved_message=resolved_message,
+                resolved_message=state["message"],
                 skill=skill,
                 result=skill_output.get("result"),
                 llm=llm,
@@ -167,7 +164,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             )
             try:
                 skill_output = await retry_skill(
-                    resolved_message,
+                    state["message"],
                     skill,
                     llm,
                     previous_code=skill_output.get("code"),
@@ -195,7 +192,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 }
             evaluation = await evaluate_skill_result(
                 user_message=state["message"],
-                resolved_message=resolved_message,
+                resolved_message=state["message"],
                 skill=skill,
                 result=skill_output.get("result"),
                 llm=llm,
@@ -261,7 +258,6 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     "content": json.dumps(
                         {
                             "user_message": state["message"],
-                            "resolved_message": state.get("resolved_message", state["message"]),
                             "history": [
                                 {"role": item.role, "content": item.content}
                                 for item in state.get("history", [])[-12:]

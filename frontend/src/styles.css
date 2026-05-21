@@ -256,6 +256,19 @@ button {
   padding: 8px;
 }
 
+.conversation-row > .conversation-menu {
+  display: none;
+}
+
+.conversation-menu-floating {
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 1000;
+  display: grid;
+  width: 172px;
+}
+
 .conversation-menu button {
   display: flex;
   align-items: center;
