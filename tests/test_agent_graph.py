@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from backend.app.services import agent_graph
 from backend.app.services.router import RouteDecision
@@ -8,6 +9,14 @@ from backend.app.services.skill_loader import SkillSpec
 
 class OfflineLLM:
     available = False
+
+
+class StreamingAnswerLLM:
+    available = True
+    settings = SimpleNamespace(answer_model="answer")
+
+    async def stream_chat(self, *_args, **_kwargs):
+        yield "Research path ready."
 
 
 async def emit(*_args, **_kwargs) -> None:
@@ -137,10 +146,13 @@ def test_research_path_skill_emits_ui_steps(monkeypatch) -> None:
     monkeypatch.setattr(agent_graph, "execute_skill", execute)
     monkeypatch.setattr(agent_graph, "evaluate_skill_result", evaluate)
 
-    graph = agent_graph.build_agent_graph(OfflineLLM(), capture)
+    graph = agent_graph.build_agent_graph(StreamingAnswerLLM(), capture)
     asyncio.run(graph.ainvoke({"message": "HY2 path", "history": [], "attachments": [], "detached_files": []}))
 
+    answer_events = [event for event in events if event[0] == "answer_delta"]
     ui_events = [event for event in events if event[0] == "ui_delta"]
+    assert answer_events
+    assert events.index(answer_events[-1]) < events.index(ui_events[0])
     assert ui_events[0][3]["action"] == "start"
     assert ui_events[1][3]["action"] == "step"
     assert ui_events[1][3]["step"]["stage_operation"] == "Rescue"

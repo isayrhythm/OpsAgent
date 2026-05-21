@@ -592,6 +592,10 @@ button {
   margin: 0 0 18px;
 }
 
+.markdown-body + .research-paths {
+  margin-top: 18px;
+}
+
 .research-path {
   overflow: hidden;
   border: 1px solid rgba(31, 93, 80, 0.18);
@@ -697,14 +701,42 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.research-step-top::-webkit-details-marker {
+  display: none;
+}
+
+.research-step-top::after {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin: 6px 2px 0 0;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  content: "";
+  transform: rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.research-step-card[open] .research-step-top::after {
+  transform: translateY(4px) rotate(225deg);
 }
 
 .research-step h4 {
+  flex: 1 1 auto;
   margin: 0;
   font-size: 16px;
   letter-spacing: -0.02em;
   line-height: 1.35;
+}
+
+.research-step-details {
+  margin-top: 10px;
+  border-top: 1px solid rgba(222, 215, 202, 0.74);
+  padding-top: 2px;
 }
 
 .research-step-field {

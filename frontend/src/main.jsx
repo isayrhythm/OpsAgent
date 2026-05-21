@@ -723,7 +723,7 @@ function App() {
       const payload = JSON.parse(event.data);
       updateMessage(sessionId, messageId, (messageItem) => ({
         ...messageItem,
-        status: payload.status || messageItem.status,
+        status: messageItem.content ? null : payload.status || messageItem.status,
         uiBlocks: applyUiDelta(messageItem.uiBlocks, payload.data),
       }));
     });
@@ -1044,12 +1044,12 @@ function MessageTurn({message, apiBase}) {
       <div className="message-stack">
         <div className={bubbleClass}>
           {!isUser && message.status ? <ThinkingPill text={message.status} /> : null}
-          {!isUser && message.uiBlocks?.length ? <ResearchPathBlocks blocks={message.uiBlocks} /> : null}
           {isUser ? (
             <p>{message.content}</p>
           ) : message.content ? (
             <div className="markdown-body" dangerouslySetInnerHTML={{__html: renderMarkdown(message.content, apiBase)}} />
           ) : null}
+          {!isUser && message.uiBlocks?.length ? <ResearchPathBlocks blocks={message.uiBlocks} /> : null}
         </div>
         {!isUser ? (
           <div className="message-meta">
@@ -1100,16 +1100,18 @@ function ResearchStep({step}) {
       <div className="research-step-mark">
         <strong>{step.step}</strong>
       </div>
-      <div className="research-step-card">
-        <div className="research-step-top">
+      <details className="research-step-card">
+        <summary className="research-step-top">
           <h4>{step.stage_operation}</h4>
           {step.figures ? <span>{step.figures}</span> : null}
+        </summary>
+        <div className="research-step-details">
+          <ResearchStepField label="Hypothesis" value={step.hypothesis} />
+          <ResearchStepField label="Methods" value={step.methods} />
+          <ResearchStepField label="Results" value={step.results} />
+          <ResearchStepField label="Conclusion" value={step.step_conclusion} />
         </div>
-        <ResearchStepField label="Hypothesis" value={step.hypothesis} />
-        <ResearchStepField label="Methods" value={step.methods} />
-        <ResearchStepField label="Results" value={step.results} />
-        <ResearchStepField label="Conclusion" value={step.step_conclusion} />
-      </div>
+      </details>
     </article>
   );
 }

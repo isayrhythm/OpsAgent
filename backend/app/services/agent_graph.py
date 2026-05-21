@@ -321,7 +321,6 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         await emit("progress", 6, "正在整理最终回复", None)
         skill_outputs = state.get("skill_outputs", [])
         skill_output = state.get("skill_output")
-        await emit_ui_blocks(state)
         if skill_output is None and not skill_outputs:
             if not llm.available:
                 answer = "当前未配置 DEEPSEEK_API_KEY，无法进行普通对话。"
@@ -401,6 +400,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             ):
                 answer += delta
                 await emit("answer_delta", 7, "输出中", {"delta": delta})
+        await emit_ui_blocks(state)
         return {"answer": answer}
 
     graph.add_node("intake_uploads", intake_uploads_node)
