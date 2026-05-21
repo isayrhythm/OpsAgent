@@ -16,6 +16,7 @@ class UploadedFileSummary(BaseModel):
     content_type: str | None = None
     size: int
     path: str | None = None
+    intake: dict[str, Any] | None = None
 
 
 class ChatRequest(BaseModel):

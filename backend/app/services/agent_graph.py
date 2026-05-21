@@ -9,6 +9,11 @@ from langgraph.graph import END, StateGraph
 from backend.app.llm.prompts import FINAL_ANSWER_SYSTEM_PROMPT, GENERAL_CHAT_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.code_executor import SkillCodeExecutionError, execute_skill, retry_skill
+from backend.app.services.data_intake import (
+    ensure_attachment_intakes,
+    profile_uploaded_files,
+    uploaded_files_prompt,
+)
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.result_evaluator import compact_value, evaluate_skill_result
 from backend.app.services.router import route_skill
@@ -25,6 +30,8 @@ class AgentState(TypedDict, total=False):
     skills: list[SkillSpec]
     skill_name: str | None
     skill_names: list[str]
+    route_reason: str
+    data_profiles: list[dict[str, Any]]
     skill_output: dict[str, Any]
     skill_outputs: list[dict[str, Any]]
     answer: str
@@ -53,8 +60,18 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             for item in state.get("attachments", [])
         ]
 
+    async def intake_uploads_node(state: AgentState) -> AgentState:
+        attachments = state.get("attachments", [])
+        if not attachments:
+            return {"attachments": [], "data_profiles": []}
+        await emit("progress", 1, "正在整理上传文件", None)
+        ready_attachments = await asyncio.to_thread(ensure_attachment_intakes, attachments)
+        data_profiles = profile_uploaded_files(ready_attachments)
+        await emit("progress", 2, "上传文件已完成 intake", None)
+        return {"attachments": ready_attachments, "data_profiles": data_profiles}
+
     async def load_skill_node(state: AgentState) -> AgentState:
-        await emit("progress", 1, "正在理解请求", None)
+        await emit("progress", 2, "正在理解请求", None)
         skills = load_skill_catalog()
         await emit(
             "progress",
@@ -67,11 +84,17 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
     async def route_node(state: AgentState) -> AgentState:
         await emit("progress", 3, "正在路由请求", None)
         skills = state.get("skills", [])
-        decision = await route_skill(state["message"], skills, llm, state.get("history", []))
+        decision = await route_skill(
+            state["message"],
+            skills,
+            llm,
+            state.get("history", []),
+            state.get("data_profiles", []),
+        )
         selected_skills = decision.skills
         if not selected_skills:
             await emit("progress", 4, "使用普通对话模式", None)
-            return {"skill_name": None, "skill_names": [], "skills": []}
+            return {"skill_name": None, "skill_names": [], "skills": [], "route_reason": decision.reason}
         await emit(
             "progress",
             4,
@@ -83,12 +106,20 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             "skill_name": loaded_skills[0].name,
             "skill_names": [skill.name for skill in loaded_skills],
             "skills": loaded_skills,
+            "route_reason": decision.reason,
         }
 
     async def run_one_skill(skill: SkillSpec, state: AgentState) -> dict[str, Any]:
         await emit("progress", 5, f"正在调用 {skill.name} 智能体", {"agent": skill.name, "agent_state": "running"})
         try:
-            skill_output = await execute_skill(state["message"], skill, llm, emit)
+            skill_output = await execute_skill(
+                state["message"],
+                skill,
+                llm,
+                emit,
+                attachments=state.get("attachments", []),
+                data_profiles=state.get("data_profiles", []),
+            )
             evaluation = await evaluate_skill_result(
                 user_message=state["message"],
                 resolved_message=state["message"],
@@ -152,6 +183,15 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 llm=llm,
             )
             skill_output["evaluation"] = evaluation
+            await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+            return {"skill_name": skill.name, "output": skill_output}
+
+        if evaluation.get("category") == "retry_code" and skill.execution_mode.startswith("deterministic"):
+            skill_output["evaluation"] = {
+                **evaluation,
+                "category": "partial",
+                "retry_instruction": "",
+            }
             await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
             return {"skill_name": skill.name, "output": skill_output}
 
@@ -226,7 +266,9 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     },
                     {
                         "role": "system",
-                        "content": "当前用户上传文件元信息：" + json.dumps(attachment_context(state), ensure_ascii=False),
+                        "content": uploaded_files_prompt(state.get("attachments", []))
+                        + "\n路由判断："
+                        + state.get("route_reason", ""),
                     },
                     *llm_history_messages(state),
                 ]
@@ -263,6 +305,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                                 for item in state.get("history", [])[-12:]
                             ],
                             "attachments": attachment_context(state),
+                            "data_profiles": state.get("data_profiles", []),
                             "skill_name": state["skill_name"],
                             "skill_names": state.get("skill_names", []),
                             "skill_output": compact_value(skill_output),
@@ -283,11 +326,13 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 await emit("answer_delta", 7, "输出中", {"delta": delta})
         return {"answer": answer}
 
+    graph.add_node("intake_uploads", intake_uploads_node)
     graph.add_node("load_skills", load_skill_node)
     graph.add_node("route", route_node)
     graph.add_node("execute_skill", execute_node)
     graph.add_node("final_answer", answer_node)
-    graph.set_entry_point("load_skills")
+    graph.set_entry_point("intake_uploads")
+    graph.add_edge("intake_uploads", "load_skills")
     graph.add_edge("load_skills", "route")
     graph.add_conditional_edges(
         "route",

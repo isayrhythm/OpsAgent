@@ -4,10 +4,12 @@ import asyncio
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
+from backend.app.services.data_intake import intake_uploaded_file
+from backend.app.services.differential_protein import DifferentialProteinError, artifact_path
 from backend.app.services.skill_loader import load_skills
 from backend.app.services.task_manager import TaskManager
 
@@ -64,10 +66,13 @@ async def upload_files(
     session_id: str = Form(...),
     files: list[UploadFile] = File(...),
 ) -> UploadResponse:
-    saved = [
-        memory.save_upload(user_id, session_id, file.filename or "upload", file.content_type, file.file)
-        for file in files
-    ]
+    saved = []
+    for file in files:
+        summary = memory.save_upload(user_id, session_id, file.filename or "upload", file.content_type, file.file)
+        intake = await asyncio.to_thread(intake_uploaded_file, summary)
+        summary = summary.model_copy(update={"intake": intake})
+        memory.update_upload_metadata(summary)
+        saved.append(summary)
     return UploadResponse(files=saved)
 
 
@@ -90,3 +95,14 @@ async def task_events(task_id: str) -> StreamingResponse:
             yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.get("/api/artifacts/{run_id}/{filename:path}")
+async def artifact(run_id: str, filename: str) -> FileResponse:
+    try:
+        path = artifact_path(run_id, filename)
+    except DifferentialProteinError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(path)

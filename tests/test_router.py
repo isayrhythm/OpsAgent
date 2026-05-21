@@ -21,8 +21,10 @@ class FakeRouterLLM:
 
     def __init__(self, response: str) -> None:
         self.response = response
+        self.calls = []
 
     async def chat(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
         return self.response
 
 
@@ -88,3 +90,25 @@ def test_invalid_router_json_raises_instead_of_fallback() -> None:
 
     with pytest.raises(RuntimeError, match="invalid JSON"):
         asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))
+
+
+def test_router_includes_data_profiles_for_skill_selection() -> None:
+    skill = make_skill("differential_protein_analysis", "differential protein analysis")
+    llm = FakeRouterLLM(
+        '{"skill_names":["differential_protein_analysis"],"reason":"proteomics matrix"}'
+    )
+    profiles = [
+        {
+            "filename": "matrix.csv",
+            "data_family": "proteomics",
+            "data_type": "expression_matrix",
+            "recommended_skills": ["differential_protein_analysis"],
+        }
+    ]
+
+    decision = asyncio.run(route_skill("做差异蛋白分析", [skill], llm, data_profiles=profiles))
+
+    assert decision.skill is skill
+    request_messages = llm.calls[0][0][0]
+    assert "data_profiles" in request_messages[1]["content"]
+    assert "proteomics" in request_messages[1]["content"]

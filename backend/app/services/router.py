@@ -44,6 +44,7 @@ async def route_skill(
     skills: list[SkillSpec],
     llm: DeepSeekClient,
     history: list[ChatHistoryMessage] | None = None,
+    data_profiles: list[dict[str, object]] | None = None,
 ) -> RouteDecision:
     history = history or []
     if not skills:
@@ -76,6 +77,7 @@ async def route_skill(
                             {"role": item.role, "content": item.content}
                             for item in history[-8:]
                         ],
+                        "data_profiles": data_profiles or [],
                         "skills": catalog,
                         "output_schema": {
                             "skill_names": ["string"],

@@ -195,7 +195,7 @@ function usageLabel(usage) {
   return `本轮 ${normalized.total} / 累计 ${normalized.cumulative} tokens`;
 }
 
-function sanitizeMarkdown(html) {
+function sanitizeMarkdown(html, apiBase = DEFAULT_API_BASE) {
   const template = document.createElement("template");
   template.innerHTML = html;
   for (const element of [...template.content.querySelectorAll("*")]) {
@@ -214,10 +214,14 @@ function sanitizeMarkdown(html) {
     }
 
     if (tagName === "a") {
-      const href = element.getAttribute("href") || "";
+      let href = element.getAttribute("href") || "";
       if (!/^(https?:|mailto:|#|\/)/i.test(href)) {
         element.removeAttribute("href");
       } else {
+        if (href.startsWith("/api/")) {
+          href = `${String(apiBase || DEFAULT_API_BASE).replace(/\/$/, "")}${href}`;
+          element.setAttribute("href", href);
+        }
         element.setAttribute("target", "_blank");
         element.setAttribute("rel", "noreferrer noopener");
       }
@@ -240,8 +244,8 @@ function normalizeMarkdown(content) {
     .join("");
 }
 
-function renderMarkdown(content) {
-  return sanitizeMarkdown(marked.parse(normalizeMarkdown(content)));
+function renderMarkdown(content, apiBase) {
+  return sanitizeMarkdown(marked.parse(normalizeMarkdown(content)), apiBase);
 }
 
 function groupLabel(session) {
@@ -317,9 +321,11 @@ function App() {
   const [input, setInput] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
+  const [draggingFiles, setDraggingFiles] = React.useState(false);
   const [userId] = React.useState(loadUserId);
   const messagesRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
+  const dragDepthRef = React.useRef(0);
 
   const activeSession = React.useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
@@ -500,6 +506,49 @@ function App() {
     }
   }
 
+  function hasDraggedFiles(event) {
+    return [...(event.dataTransfer?.types || [])].includes("Files");
+  }
+
+  function handleWorkspaceDragEnter(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDraggingFiles(true);
+  }
+
+  function handleWorkspaceDragOver(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDraggingFiles(true);
+  }
+
+  function handleWorkspaceDragLeave(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setDraggingFiles(false);
+    }
+  }
+
+  function handleWorkspaceDrop(event) {
+    if (!hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setDraggingFiles(false);
+    uploadFiles(event.dataTransfer.files);
+  }
+
   async function submitMessage(message) {
     const text = message.trim();
     if (!text || submitting) {
@@ -647,13 +696,20 @@ function App() {
         onCheckApi={checkApi}
       />
 
-      <main className="workspace" onClick={() => openMenuId && setOpenMenuId(null)}>
+      <main
+        className={`workspace ${draggingFiles ? "file-dragging" : ""}`}
+        onClick={() => openMenuId && setOpenMenuId(null)}
+        onDragEnter={handleWorkspaceDragEnter}
+        onDragOver={handleWorkspaceDragOver}
+        onDragLeave={handleWorkspaceDragLeave}
+        onDrop={handleWorkspaceDrop}
+      >
         <Topbar connection={connection} onMenu={() => setSidebarOpen(true)} activeTitle={activeSession?.title} />
         <section className="message-scroll" ref={messagesRef}>
           {!activeSession || !activeSession.messages.length ? (
             <EmptyState onPick={submitMessage} />
           ) : (
-            <MessageList messages={activeSession.messages} />
+            <MessageList messages={activeSession.messages} apiBase={normalizedApiBase()} />
           )}
         </section>
         <Composer
@@ -667,6 +723,7 @@ function App() {
           onFiles={uploadFiles}
           fileInputRef={fileInputRef}
         />
+        {draggingFiles ? <FileDropOverlay uploading={uploading} /> : null}
       </main>
     </div>
   );
@@ -843,6 +900,17 @@ function Topbar({connection, onMenu, activeTitle}) {
   );
 }
 
+function FileDropOverlay({uploading}) {
+  return (
+    <div className="file-drop-overlay" aria-hidden="true">
+      <div className="file-drop-card">
+        <strong>{uploading ? "正在上传" : "松开上传文件"}</strong>
+        <span>文件会加入当前对话并先完成 intake。</span>
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({onPick}) {
   return (
     <div className="empty-state">
@@ -862,7 +930,7 @@ function EmptyState({onPick}) {
   );
 }
 
-function MessageList({messages}) {
+function MessageList({messages, apiBase}) {
   let cumulativeBase = 0;
   return (
     <div className="thread">
@@ -871,13 +939,13 @@ function MessageList({messages}) {
         if (usage) {
           cumulativeBase += usage.total;
         }
-        return <MessageTurn key={message.id} message={{...message, usage}} />;
+        return <MessageTurn key={message.id} message={{...message, usage}} apiBase={apiBase} />;
       })}
     </div>
   );
 }
 
-function MessageTurn({message}) {
+function MessageTurn({message, apiBase}) {
   const isUser = message.role === "user";
   const bubbleClass = `bubble ${!isUser && message.status && !message.content ? "thinking-only" : ""}`;
   return (
@@ -889,7 +957,7 @@ function MessageTurn({message}) {
           {isUser ? (
             <p>{message.content}</p>
           ) : message.content ? (
-            <div className="markdown-body" dangerouslySetInnerHTML={{__html: renderMarkdown(message.content)}} />
+            <div className="markdown-body" dangerouslySetInnerHTML={{__html: renderMarkdown(message.content, apiBase)}} />
           ) : null}
         </div>
         {!isUser ? (

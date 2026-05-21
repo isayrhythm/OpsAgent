@@ -64,7 +64,14 @@ class MemoryStore:
             if item.get("role") in {"user", "assistant", "agent"} and item.get("content")
         ]
 
-    def append_exchange(self, user_id: str, session_id: str, user_message: str, answer: str) -> None:
+    def append_exchange(
+        self,
+        user_id: str,
+        session_id: str,
+        user_message: str,
+        answer: str,
+        attachments: list[UploadedFileSummary] | None = None,
+    ) -> None:
         self.ensure_user_dirs(user_id)
         path = self.paths.conversation_path(user_id, session_id)
         if path.exists():
@@ -78,6 +85,8 @@ class MemoryStore:
             }
 
         payload["updated_at"] = _now()
+        if attachments:
+            payload["uploaded_files"] = [item.model_dump(mode="json") for item in attachments]
         payload.setdefault("messages", []).extend(
             [
                 {"role": "user", "content": user_message, "created_at": _now()},
@@ -114,3 +123,19 @@ class MemoryStore:
         metadata_path = upload_dir / f"{file_id}.json"
         metadata_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
         return summary
+
+    def update_upload_metadata(self, summary: UploadedFileSummary) -> None:
+        if not summary.path:
+            return
+        metadata_path = Path(summary.path).parent / f"{summary.file_id}.json"
+        metadata_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
+
+    def load_uploads(self, user_id: str, session_id: str) -> list[UploadedFileSummary]:
+        upload_dir = self.paths.upload_session_dir(user_id, session_id)
+        if not upload_dir.exists():
+            return []
+        uploads: list[UploadedFileSummary] = []
+        for path in sorted(upload_dir.glob("*.json")):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            uploads.append(UploadedFileSummary.model_validate(payload))
+        return uploads

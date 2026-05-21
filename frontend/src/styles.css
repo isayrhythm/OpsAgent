@@ -352,6 +352,60 @@ button {
   height: 100dvh;
 }
 
+.workspace.file-dragging {
+  isolation: isolate;
+}
+
+.file-drop-overlay {
+  position: absolute;
+  z-index: 40;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed rgba(31, 93, 80, 0.42);
+  border-radius: 34px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(255, 253, 248, 0.94), rgba(220, 235, 227, 0.84)),
+    rgba(246, 243, 236, 0.8);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.file-drop-card {
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100% - 36px));
+  border: 1px solid rgba(203, 192, 175, 0.78);
+  border-radius: 28px;
+  background: rgba(255, 253, 248, 0.94);
+  box-shadow: var(--shadow);
+  padding: 32px;
+  text-align: center;
+  animation: file-drop-rise 160ms ease both;
+}
+
+.file-drop-card strong {
+  color: var(--accent-strong);
+  font-size: clamp(24px, 4vw, 38px);
+  letter-spacing: -0.04em;
+}
+
+.file-drop-card span {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+@keyframes file-drop-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .topbar {
   display: flex;
   align-items: center;

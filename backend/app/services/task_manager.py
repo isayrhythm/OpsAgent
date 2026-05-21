@@ -63,6 +63,8 @@ class TaskManager:
                 self._memory.ensure_user_dirs(state.user_id)
                 if not state.history:
                     state.history = self._memory.load_history(state.user_id, state.session_id)
+                if not state.attachments:
+                    state.attachments = self._memory.load_uploads(state.user_id, state.session_id)
             graph = build_agent_graph(llm, lambda event_type, step, status, data=None: self._emit(
                 state,
                 event_type,
@@ -75,7 +77,13 @@ class TaskManager:
             )
             answer = result.get("answer") or ""
             if state.session_id and answer:
-                self._memory.append_exchange(state.user_id, state.session_id, state.message, answer)
+                self._memory.append_exchange(
+                    state.user_id,
+                    state.session_id,
+                    state.message,
+                    answer,
+                    result.get("attachments") or state.attachments,
+                )
             await self._emit(
                 state,
                 "result",

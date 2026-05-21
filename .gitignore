@@ -9,6 +9,8 @@ dist/
 .downloads/
 .runtime/
 logs/
+*.log
+memory/artifacts/
 data/gene_info/
 .pytest_cache/
 .pytest_tmp*/
