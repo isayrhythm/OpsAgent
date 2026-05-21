@@ -55,3 +55,33 @@ def test_intake_retries_sparse_matrix_until_standard_matrix_is_ready(tmp_path) -
     assert [attempt["status"] for attempt in intake["attempts"]] == ["failed", "completed"]
     assert Path(intake["standard_files"]["matrix"]).is_file()
     assert Path(intake["standard_files"]["sample_metadata"]).is_file()
+
+
+def test_intake_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path) -> None:
+    source = tmp_path / "rice_counts.tsv"
+    source.write_text(
+        "\n".join(
+            [
+                "\tMT1\tMT2\tWT1\tWT2",
+                "AGIS_Os01g000010\t3591\t3659\t3444\t2936",
+                "AGIS_Os01g000020\t22\t22\t8\t10",
+                "AGIS_Os01g000030\t400\t360\t416\t323",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    attachment = UploadedFileSummary(
+        file_id="rice-counts",
+        filename=source.name,
+        content_type="text/tab-separated-values",
+        size=source.stat().st_size,
+        path=str(source),
+    )
+
+    intake = intake_uploaded_file(attachment)
+    matrix_text = Path(intake["standard_files"]["matrix"]).read_text(encoding="utf-8")
+
+    assert intake["status"] == "ready"
+    assert intake["data_family"] == "transcriptomics"
+    assert intake["feature_count"] == 3
+    assert "AGIS_Os01g000010" in matrix_text

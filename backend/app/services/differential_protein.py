@@ -23,6 +23,8 @@ class DifferentialProteinError(ValueError):
 
 ANALYSIS_TIMEOUT_SECONDS = int(os.getenv("OPSAGENT_ANALYSIS_TIMEOUT_SECONDS", "120"))
 PLOTLY_BUNDLE = Path(__file__).resolve().parents[1] / "vendor" / "plotly-3.5.1.min.js"
+DEFAULT_PVALUE_CUTOFF = 0.05
+DEFAULT_FOLD_CHANGE_CUTOFF = 1.5
 
 
 def run_differential_protein_analysis(
@@ -33,6 +35,7 @@ def run_differential_protein_analysis(
     if "error" in intake:
         return intake
 
+    parameters = _analysis_parameters(message)
     run_id = uuid.uuid4().hex
     output_dir = MEMORY_DIR / "artifacts" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -57,6 +60,8 @@ def run_differential_protein_analysis(
         str(output_dir),
         intake["group_a"],
         intake["group_b"],
+        str(parameters["pvalue_cutoff"]),
+        str(parameters["fold_change_cutoff"]),
     ]
     completed = subprocess.run(
         command,
@@ -77,7 +82,7 @@ def run_differential_protein_analysis(
             "source_file": intake["source_file"],
         }
 
-    summary = _summarize_results(output_dir)
+    summary = _summarize_results(output_dir, parameters)
     report_path = _write_report(output_dir, intake, summary)
     return {
         "status": "completed",
@@ -91,6 +96,7 @@ def run_differential_protein_analysis(
         },
         "feature_count": intake["feature_count"],
         "sample_count": intake["sample_count"],
+        "parameters": parameters,
         "summary": summary,
         "files": {
             "report_html": str(report_path),
@@ -197,6 +203,47 @@ def _choose_comparison(groups: dict[str, list[str]], message: str) -> tuple[str 
     return None
 
 
+def _analysis_parameters(message: str) -> dict[str, float]:
+    return {
+        "pvalue_cutoff": _message_cutoff(
+            message,
+            (
+                r"\bp\s*[-_ ]?value\b",
+                r"\bpvalue\b",
+                r"\bp\s*值\b",
+                r"p值",
+            ),
+            DEFAULT_PVALUE_CUTOFF,
+            lambda value: 0 < value < 1,
+        ),
+        "fold_change_cutoff": _message_cutoff(
+            message,
+            (
+                r"\bfold\s*[-_ ]?change\b",
+                r"\bfc\b",
+                r"倍数",
+            ),
+            DEFAULT_FOLD_CHANGE_CUTOFF,
+            lambda value: value >= 1,
+        ),
+    }
+
+
+def _message_cutoff(
+    message: str,
+    names: tuple[str, ...],
+    default: float,
+    valid: Any,
+) -> float:
+    name = "(?:" + "|".join(names) + ")"
+    separator = r"(?:\s*(?:cutoff|threshold|阈值))?\s*(?:改为|设为|设置为|调整为|重设为|=|<=|>=|<|>|:|：)?\s*"
+    match = re.search(name + separator + r"([0-9]+(?:\.[0-9]+)?(?:e-?[0-9]+)?)", message, re.I)
+    if not match:
+        return default
+    value = float(match.group(1))
+    return value if valid(value) else default
+
+
 def _find_rscript() -> Path | None:
     env_path = os.getenv("OPSAGENT_RSCRIPT_PATH")
     candidates = [
@@ -220,6 +267,8 @@ metadata_file <- args[[2]]
 output_dir <- args[[3]]
 group_a <- args[[4]]
 group_b <- args[[5]]
+pvalue_cutoff <- as.numeric(args[[6]])
+fold_change_cutoff <- as.numeric(args[[7]])
 
 matrix <- read.csv(matrix_file, check.names = FALSE, stringsAsFactors = FALSE)
 metadata <- read.csv(metadata_file, check.names = FALSE, stringsAsFactors = FALSE)
@@ -260,8 +309,8 @@ for (i in seq_len(nrow(matrix))) {
 result <- do.call(rbind, rows)
 result$padj <- p.adjust(result$pvalue, method = "BH")
 result$regulation <- "not_significant"
-result$regulation[is.finite(result$fold_change) & is.finite(result$pvalue) & result$fold_change >= 1.5 & result$pvalue < 0.05] <- "up"
-result$regulation[is.finite(result$fold_change) & is.finite(result$pvalue) & result$fold_change <= (2 / 3) & result$pvalue < 0.05] <- "down"
+result$regulation[is.finite(result$fold_change) & is.finite(result$pvalue) & result$fold_change >= fold_change_cutoff & result$pvalue < pvalue_cutoff] <- "up"
+result$regulation[is.finite(result$fold_change) & is.finite(result$pvalue) & result$fold_change <= (1 / fold_change_cutoff) & result$pvalue < pvalue_cutoff] <- "down"
 result <- result[order(result$pvalue, na.last = TRUE), ]
 
 write.csv(result, file.path(output_dir, "all_results.csv"), row.names = FALSE, na = "")
@@ -271,7 +320,7 @@ write.csv(result[result$regulation == "down", ], file.path(output_dir, "down_res
 '''
 
 
-def _summarize_results(output_dir: Path) -> dict[str, Any]:
+def _summarize_results(output_dir: Path, parameters: dict[str, float]) -> dict[str, Any]:
     all_results = pd.read_csv(output_dir / "all_results.csv")
     differential = all_results[all_results["regulation"] != "not_significant"]
     up = all_results[all_results["regulation"] == "up"]
@@ -281,8 +330,8 @@ def _summarize_results(output_dir: Path) -> dict[str, Any]:
         "differential": int(len(differential)),
         "up": int(len(up)),
         "down": int(len(down)),
-        "pvalue_cutoff": 0.05,
-        "fold_change_cutoff": 1.5,
+        "pvalue_cutoff": parameters["pvalue_cutoff"],
+        "fold_change_cutoff": parameters["fold_change_cutoff"],
     }
 
 
@@ -481,6 +530,7 @@ def _report_html(
   <div class="hero">
     <h1>Differential Protein Analysis</h1>
     <div class="muted">Comparison: {comparison}</div>
+    <div class="muted">Thresholds: p-value &lt; {summary['pvalue_cutoff']}; fold change &gt;= {summary['fold_change_cutoff']} or &lt;= {1 / summary['fold_change_cutoff']:.4g}</div>
     <div class="cards">
       <div class="card"><div class="muted">Total proteins</div><div class="value">{summary['total']}</div></div>
       <div class="card"><div class="muted">Differential</div><div class="value">{summary['differential']}</div></div>

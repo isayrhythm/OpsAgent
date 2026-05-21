@@ -1,4 +1,4 @@
-from backend.app.services.differential_protein import _cluster_heatmap_rows, _report_html
+from backend.app.services.differential_protein import _analysis_parameters, _cluster_heatmap_rows, _report_html
 
 
 def test_cluster_heatmap_rows_keeps_similar_expression_patterns_adjacent() -> None:
@@ -21,7 +21,7 @@ def test_report_uses_local_plotly_for_interactive_plots() -> None:
             "group_a": "WT",
             "group_b": "MT",
         },
-        {"total": 4, "differential": 2, "up": 1, "down": 1},
+        {"total": 4, "differential": 2, "up": 1, "down": 1, "pvalue_cutoff": 0.01, "fold_change_cutoff": 2.0},
         [{"id": "P1", "name": "P1", "x": 1.2, "y": 3.0, "fold_change": 2.3, "pvalue": 0.001, "regulation": "up"}],
         {"samples": ["WT1", "MT1"], "rows": [{"id": "P1", "name": "P1", "values": [-1, 1]}]},
         "<tr><td>P1</td></tr>",
@@ -32,3 +32,10 @@ def test_report_uses_local_plotly_for_interactive_plots() -> None:
     assert 'type:"heatmap"' in report
     assert "displayModeBar:false" in report
     assert "Clustered protein axis" in report
+    assert "p-value &lt; 0.01" in report
+
+
+def test_analysis_parameters_accept_explicit_thresholds() -> None:
+    parameters = _analysis_parameters("pvalue 改为0.01，fold change 阈值设为 2 跑一遍")
+
+    assert parameters == {"pvalue_cutoff": 0.01, "fold_change_cutoff": 2.0}

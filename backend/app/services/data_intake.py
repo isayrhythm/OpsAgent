@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -12,12 +13,17 @@ from backend.app.schemas import UploadedFileSummary
 
 SUPPORTED_TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm"}
 DEFAULT_MAX_INTAKE_ATTEMPTS = 3
+INTAKE_VERSION = 2
 
 
 def ensure_attachment_intakes(attachments: list[UploadedFileSummary]) -> list[UploadedFileSummary]:
     ready: list[UploadedFileSummary] = []
     for item in attachments:
-        if item.intake and item.intake.get("status") == "ready":
+        if (
+            item.intake
+            and item.intake.get("status") == "ready"
+            and item.intake.get("intake_version") == INTAKE_VERSION
+        ):
             ready.append(item)
             continue
         ready.append(item.model_copy(update={"intake": intake_uploaded_file(item)}))
@@ -67,6 +73,7 @@ def intake_uploaded_file(
             profile.update(
                 {
                     "status": "ready",
+                    "intake_version": INTAKE_VERSION,
                     "feature_count": standard["feature_count"],
                     "sample_count": standard["sample_count"],
                     "sample_groups": standard["sample_groups"],
@@ -250,6 +257,9 @@ def detect_data_family(frame: pd.DataFrame, data_type: str) -> str:
         return "proteomics"
     if any(hit in columns_text for hit in transcriptomics_hits):
         return "transcriptomics"
+    feature_id_column = _first_matching_column(frame, ("gene_id", "locus", "feature_id", "id"))
+    if data_type == "expression_matrix" and feature_id_column and _looks_like_gene_ids(frame[feature_id_column]):
+        return "transcriptomics"
     if data_type == "expression_matrix":
         return "expression"
     return "unknown"
@@ -288,6 +298,7 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
                     f"  文件大小：{item.size} bytes",
                     f"  intake 状态：{intake.get('status', 'not_processed')}",
                     f"  数据识别：{intake.get('data_family', 'unknown')}/{intake.get('data_type', 'unknown_table')}",
+                    f"  标准矩阵规模：features={intake.get('feature_count', 'unknown')}; samples={intake.get('sample_count', 'unknown')}",
                     f"  原始结构预览：{columns}",
                     f"  标准化结构：matrix={standard_files.get('matrix', 'not_ready')}; metadata={standard_files.get('sample_metadata', 'not_ready')}",
                     f"  已识别分组：{group_text}",
@@ -358,6 +369,7 @@ def _clean_frame(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
     frame = frame.dropna(axis=0, how="all").dropna(axis=1, how="all")
     frame.columns = [str(column).strip() for column in frame.columns]
+    frame = _preserve_feature_index_column(frame)
     frame = frame.loc[:, [not str(column).startswith("Unnamed:") for column in frame.columns]]
     return frame.reset_index(drop=True)
 
@@ -367,6 +379,7 @@ def _profile_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
         "file_id": item.file_id,
         "filename": item.filename,
         "source_path": str(path),
+        "intake_version": INTAKE_VERSION,
         "status": "unread",
         "data_family": "unknown",
         "data_type": "unknown_table",
@@ -503,3 +516,39 @@ def _looks_like_annotation_column(lowered: str) -> bool:
             "locus",
         )
     )
+
+
+def _preserve_feature_index_column(frame: pd.DataFrame) -> pd.DataFrame:
+    if "feature_id" in frame.columns:
+        return frame
+    for column in frame.columns:
+        if str(column).startswith("Unnamed:") and _looks_like_feature_ids(frame[column]):
+            return frame.rename(columns={column: "feature_id"})
+    return frame
+
+
+def _looks_like_feature_ids(series: pd.Series) -> bool:
+    values = series.astype(str).str.strip()
+    values = values[values.ne("") & values.str.lower().ne("nan")]
+    if len(values) < 2:
+        return False
+    numeric_ratio = _numeric_series(values).notna().sum() / len(values)
+    unique_ratio = values.nunique() / len(values)
+    return numeric_ratio < 0.2 and unique_ratio >= 0.5
+
+
+def _looks_like_gene_ids(series: pd.Series) -> bool:
+    values = series.astype(str).str.strip()
+    values = values[values.ne("") & values.str.lower().ne("nan")].head(100)
+    if len(values) < 2:
+        return False
+    patterns = (
+        r"(?:AGIS_)?Os\d{2}g\d+",
+        r"LOC_[A-Za-z0-9]+g\d+",
+        r"AT[1-5CM]G\d+",
+        r"Glyma\.\d+G\d+",
+        r"Zm\d+(?:d|eb)\d+",
+        r"ENS[A-Z]*G\d+",
+    )
+    matches = values.str.match("^(?:" + "|".join(patterns) + r")", case=False).sum()
+    return matches >= max(2, math.ceil(len(values) * 0.5))
