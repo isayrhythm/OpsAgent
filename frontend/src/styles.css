@@ -65,7 +65,9 @@ button {
 .sidebar {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
   border-right: 1px solid rgba(203, 192, 175, 0.7);
   background: var(--sidebar);
   backdrop-filter: blur(20px);
@@ -74,6 +76,7 @@ button {
 
 .brand {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 12px;
   padding: 4px 4px 18px;
@@ -107,6 +110,7 @@ button {
 
 .new-chat {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -137,6 +141,7 @@ button {
 }
 
 .conversation-list {
+  flex: 1 1 auto;
   min-height: 0;
   margin-top: 18px;
   padding-right: 2px;
@@ -307,7 +312,8 @@ button {
 }
 
 .sidebar-settings {
-  margin-top: auto;
+  flex: 0 0 auto;
+  margin-top: 0;
   padding-top: 16px;
 }
 
