@@ -592,6 +592,37 @@ button {
   line-height: 1.75;
 }
 
+.markdown-body a.citation-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  min-height: 22px;
+  margin: 0 2px;
+  border: 1px solid rgba(31, 93, 80, 0.28);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.72), transparent 34%),
+    linear-gradient(135deg, rgba(207, 230, 219, 1), rgba(244, 229, 198, 0.96));
+  color: var(--accent-strong);
+  font-size: 0.82em;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 7px 18px rgba(31, 93, 80, 0.1);
+  transform: translateY(-1px);
+}
+
+.markdown-body a.citation-link:hover {
+  border-color: rgba(31, 93, 80, 0.38);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.82), transparent 34%),
+    linear-gradient(135deg, rgba(188, 219, 204, 1), rgba(237, 217, 177, 1));
+  color: #143f36;
+}
+
 .research-paths {
   display: grid;
   gap: 16px;
@@ -987,6 +1018,55 @@ button {
   background: rgba(255, 253, 248, 0.94);
   box-shadow: 0 22px 72px rgba(88, 74, 50, 0.16);
   padding: 10px;
+}
+
+.composer-actions {
+  grid-column: 2 / 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 32px;
+  align-items: center;
+}
+
+.composer-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  border: 1px solid rgba(203, 192, 175, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.82);
+  color: var(--muted);
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+.composer-mode:hover {
+  border-color: rgba(31, 93, 80, 0.24);
+  background: rgba(238, 246, 241, 0.86);
+  color: var(--accent-strong);
+}
+
+.composer-mode.active {
+  border-color: rgba(31, 93, 80, 0.35);
+  background: rgba(220, 235, 227, 0.92);
+  color: var(--accent-strong);
+}
+
+.composer-mode:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.composer-mode svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
 }
 
 .composer textarea {

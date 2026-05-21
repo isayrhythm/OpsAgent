@@ -90,6 +90,7 @@ function normalizeSession(session) {
           createdAt: Number(message.createdAt || Date.now()),
           usage: message.usage,
           uiBlocks: Array.isArray(message.uiBlocks) ? message.uiBlocks : [],
+          webSources: Array.isArray(message.webSources) ? message.webSources : [],
         }))
       : [],
     attachments: Array.isArray(session.attachments) ? session.attachments : [],
@@ -198,7 +199,82 @@ function usageLabel(usage) {
   return `本轮 ${normalized.total} / 累计 ${normalized.cumulative} tokens`;
 }
 
-function sanitizeMarkdown(html, apiBase = DEFAULT_API_BASE) {
+function sourceMapFromSources(sources = []) {
+  if (!Array.isArray(sources) || !sources.length) {
+    return new Map();
+  }
+  return new Map(
+    sources
+      .filter((source) => source?.index && source?.url)
+      .map((source) => [String(source.index), String(source.url)])
+  );
+}
+
+function createCitationNode(documentRef, index, url) {
+  const link = documentRef.createElement("a");
+  link.href = url;
+  link.textContent = `[${index}]`;
+  link.className = "citation-link";
+  link.target = "_blank";
+  link.rel = "noreferrer noopener";
+  link.title = "打开搜索来源";
+  return link;
+}
+
+function linkCitationTextNodes(root, sources = []) {
+  const sourceMap = sourceMapFromSources(sources);
+  if (!sourceMap.size) {
+    return;
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent || parent.closest("a, code, pre")) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return /(?:\[\^?\d+(?:\s*[,，]\s*\d+)*\]|【\d+(?:\s*[,，]\s*\d+)*】)/.test(node.nodeValue || "")
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) {
+    nodes.push(walker.currentNode);
+  }
+
+  for (const node of nodes) {
+    const text = node.nodeValue || "";
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    const citationPattern = /(\[\^?\d+(?:\s*[,，]\s*\d+)*\]|【\d+(?:\s*[,，]\s*\d+)*】)/g;
+    for (const match of text.matchAll(citationPattern)) {
+      const start = match.index || 0;
+      if (start > cursor) {
+        fragment.append(document.createTextNode(text.slice(cursor, start)));
+      }
+      const indexes = match[0].match(/\d+/g) || [];
+      let linked = false;
+      for (const index of indexes) {
+        const url = sourceMap.get(index);
+        if (!url) {
+          continue;
+        }
+        fragment.append(createCitationNode(document, index, url));
+        linked = true;
+      }
+      if (!linked) {
+        fragment.append(document.createTextNode(match[0]));
+      }
+      cursor = start + match[0].length;
+    }
+    if (cursor < text.length) {
+      fragment.append(document.createTextNode(text.slice(cursor)));
+    }
+    node.replaceWith(fragment);
+  }
+}
+
+function sanitizeMarkdown(html, apiBase = DEFAULT_API_BASE, sources = []) {
   const template = document.createElement("template");
   template.innerHTML = html;
   for (const element of [...template.content.querySelectorAll("*")]) {
@@ -227,9 +303,14 @@ function sanitizeMarkdown(html, apiBase = DEFAULT_API_BASE) {
         }
         element.setAttribute("target", "_blank");
         element.setAttribute("rel", "noreferrer noopener");
+        if (/^\[?\^?\d+\]?$/.test(element.textContent.trim())) {
+          element.classList.add("citation-link");
+          element.setAttribute("title", "打开搜索来源");
+        }
       }
     }
   }
+  linkCitationTextNodes(template.content, sources);
   return template.innerHTML;
 }
 
@@ -247,8 +328,8 @@ function normalizeMarkdown(content) {
     .join("");
 }
 
-function renderMarkdown(content, apiBase) {
-  return sanitizeMarkdown(marked.parse(normalizeMarkdown(content)), apiBase);
+function renderMarkdown(content, apiBase, sources) {
+  return sanitizeMarkdown(marked.parse(normalizeMarkdown(content)), apiBase, sources);
 }
 
 function applyUiDelta(blocks, delta) {
@@ -344,11 +425,13 @@ function App() {
   const [submitting, setSubmitting] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
   const [uploadStatus, setUploadStatus] = React.useState("");
+  const [webSearchEnabled, setWebSearchEnabled] = React.useState(false);
   const [draggingFiles, setDraggingFiles] = React.useState(false);
   const [userId] = React.useState(loadUserId);
   const messagesRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
   const dragDepthRef = React.useRef(0);
+  const sourceCacheRef = React.useRef(new Map());
 
   const activeSession = React.useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
@@ -668,6 +751,7 @@ function App() {
           history,
           attachments: session.attachments || [],
           detached_files: session.detachedFiles || [],
+          web_search: webSearchEnabled,
         }),
       });
       if (!response.ok) {
@@ -689,6 +773,7 @@ function App() {
   function listenToTask(eventsUrl, sessionId, messageId) {
     const source = new EventSource(`${normalizedApiBase()}${eventsUrl}`);
     const activeAgents = new Map();
+    sourceCacheRef.current.delete(messageId);
 
     source.addEventListener("progress", (event) => {
       const payload = JSON.parse(event.data);
@@ -710,9 +795,11 @@ function App() {
       const delta = payload.data?.delta || "";
       updateMessage(sessionId, messageId, (messageItem) => {
         const content = `${messageItem.content || ""}${delta}`;
+        const cachedSources = sourceCacheRef.current.get(messageId);
         return {
           ...messageItem,
           content,
+          webSources: cachedSources || messageItem.webSources || [],
           status: null,
           usage: normalizeUsage({...messageItem.usage, output: textSize(content)}),
         };
@@ -728,14 +815,29 @@ function App() {
       }));
     });
 
+    source.addEventListener("source_delta", (event) => {
+      const payload = JSON.parse(event.data);
+      const sources = payload.data?.sources || [];
+      sourceCacheRef.current.set(messageId, sources);
+      updateMessage(sessionId, messageId, (messageItem) => ({
+        ...messageItem,
+        webSources: sources,
+        status: messageItem.content ? null : payload.status || messageItem.status,
+      }));
+    });
+
     source.addEventListener("result", (event) => {
       const payload = JSON.parse(event.data);
       const answer = payload.data?.answer || JSON.stringify(payload.data || {}, null, 2);
+      if (payload.data?.web_sources) {
+        sourceCacheRef.current.set(messageId, payload.data.web_sources);
+      }
       updateMessage(sessionId, messageId, (messageItem) => {
         const content = messageItem.content || answer;
         return {
           ...messageItem,
           content,
+          webSources: payload.data?.web_sources || sourceCacheRef.current.get(messageId) || messageItem.webSources || [],
           status: null,
           streaming: false,
           usage: normalizeUsage({...messageItem.usage, output: textSize(content)}),
@@ -807,6 +909,8 @@ function App() {
           disabled={submitting || uploading}
           uploading={uploading}
           uploadStatus={uploadStatus}
+          webSearchEnabled={webSearchEnabled}
+          onToggleWebSearch={() => setWebSearchEnabled((enabled) => !enabled)}
           attachments={activeSession?.attachments || []}
           onUploadClick={() => fileInputRef.current?.click()}
           onFiles={uploadFiles}
@@ -1047,7 +1151,10 @@ function MessageTurn({message, apiBase}) {
           {isUser ? (
             <p>{message.content}</p>
           ) : message.content ? (
-            <div className="markdown-body" dangerouslySetInnerHTML={{__html: renderMarkdown(message.content, apiBase)}} />
+            <div
+              className="markdown-body"
+              dangerouslySetInnerHTML={{__html: renderMarkdown(message.content, apiBase, message.webSources)}}
+            />
           ) : null}
           {!isUser && message.uiBlocks?.length ? <ResearchPathBlocks blocks={message.uiBlocks} /> : null}
         </div>
@@ -1143,6 +1250,8 @@ function Composer({
   disabled,
   uploading,
   uploadStatus,
+  webSearchEnabled,
+  onToggleWebSearch,
   attachments,
   onUploadClick,
   onFiles,
@@ -1209,6 +1318,18 @@ function Composer({
         <button className="send-button" type="submit" disabled={disabled || !value.trim()} aria-label="发送">
           <SendIcon />
         </button>
+        <div className="composer-actions">
+          <button
+            className={`composer-mode ${webSearchEnabled ? "active" : ""}`}
+            type="button"
+            onClick={onToggleWebSearch}
+            disabled={disabled}
+            aria-pressed={webSearchEnabled}
+          >
+            <SearchIcon />
+            智能搜索
+          </button>
+        </div>
       </form>
       <p className="composer-hint">OpsAgent 可能会犯错，重要结果请核验。</p>
     </div>
@@ -1239,6 +1360,15 @@ function SendIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 12h14" />
       <path d="m13 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m16.5 16.5 4 4" />
     </svg>
   );
 }

@@ -64,13 +64,14 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     calls = {}
 
     class FakeTasks:
-        def create_task(self, message, user_id, session_id, history, attachments, detached_files):
+        def create_task(self, message, user_id, session_id, history, attachments, detached_files, web_search=False):
             calls["message"] = message
             calls["user_id"] = user_id
             calls["session_id"] = session_id
             calls["history"] = history
             calls["attachments"] = attachments
             calls["detached_files"] = detached_files
+            calls["web_search"] = web_search
             return "task-1"
 
     monkeypatch.setattr(main, "tasks", FakeTasks())
@@ -93,6 +94,7 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
                 }
             ],
             "detached_files": [{"file_id": "file-b", "filename": "removed.csv"}],
+            "web_search": True,
         },
     )
 
@@ -104,3 +106,4 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     assert calls["history"][0].content == "previous"
     assert calls["attachments"][0].filename == "a.txt"
     assert calls["detached_files"][0].filename == "removed.csv"
+    assert calls["web_search"] is True

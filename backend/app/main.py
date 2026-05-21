@@ -58,6 +58,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         request.history,
         request.attachments,
         request.detached_files,
+        request.web_search,
     )
     return ChatResponse(task_id=task_id, events_url=f"/api/tasks/{task_id}/events")
 

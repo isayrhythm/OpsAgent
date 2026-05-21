@@ -156,3 +156,108 @@ def test_research_path_skill_emits_ui_steps(monkeypatch) -> None:
     assert ui_events[0][3]["action"] == "start"
     assert ui_events[1][3]["action"] == "step"
     assert ui_events[1][3]["step"]["stage_operation"] == "Rescue"
+
+
+def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch) -> None:
+    class SearchLLM:
+        available = True
+        settings = SimpleNamespace(answer_model="answer")
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def stream_chat(self, messages, *_args, **_kwargs):
+            self.calls.append(messages)
+            yield "searched answer"
+
+    route_calls = {"count": 0}
+
+    async def route(*_args, **_kwargs):
+        route_calls["count"] += 1
+        return RouteDecision(skill=None, skills=[], reason="normal chat")
+
+    async def search(query, **_kwargs):
+        return {
+            "query": query,
+            "results": [
+                {
+                    "title": "Example result",
+                    "url": "https://example.com/result",
+                    "content": "fresh web context",
+                }
+            ],
+        }
+
+    events = []
+
+    async def capture(event_type, step, status, data=None) -> None:
+        events.append((event_type, step, status, data))
+
+    monkeypatch.setattr(agent_graph, "route_skill", route)
+    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [])
+    monkeypatch.setattr(agent_graph, "search_web", search)
+
+    llm = SearchLLM()
+    graph = agent_graph.build_agent_graph(llm, capture)
+    result = asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "latest Tavily news",
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+                "web_search": True,
+            }
+        )
+    )
+
+    joined_context = "\n".join(message["content"] for message in llm.calls[0])
+    assert result["answer"] == "searched answer"
+    assert route_calls["count"] == 1
+    assert result["web_sources"] == [
+        {"index": 1, "title": "Example result", "url": "https://example.com/result"}
+    ]
+    assert "fresh web context" in joined_context
+    assert "https://example.com/result" in joined_context
+    assert any(event[2] == "正在搜索网页" for event in events)
+    assert any(event[0] == "source_delta" and event[3]["sources"][0]["index"] == 1 for event in events)
+
+
+def test_web_search_without_sources_still_uses_final_answer_prompt(monkeypatch) -> None:
+    class SearchLLM:
+        available = True
+        settings = SimpleNamespace(answer_model="answer")
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def stream_chat(self, messages, *_args, **_kwargs):
+            self.calls.append(messages)
+            yield "searched answer"
+
+    async def route(*_args, **_kwargs):
+        return RouteDecision(skill=None, skills=[], reason="normal chat")
+
+    async def search(query, **_kwargs):
+        return {"query": query, "results": []}
+
+    monkeypatch.setattr(agent_graph, "route_skill", route)
+    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [])
+    monkeypatch.setattr(agent_graph, "search_web", search)
+
+    llm = SearchLLM()
+    graph = agent_graph.build_agent_graph(llm, emit)
+    asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "latest news",
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+                "web_search": True,
+            }
+        )
+    )
+
+    assert llm.calls[0][0]["content"].startswith("根据当前用户提问")
+    assert "web_search" in llm.calls[0][1]["content"]

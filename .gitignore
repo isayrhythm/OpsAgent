@@ -14,6 +14,7 @@ memory/artifacts/
 data/gene_info/
 .pytest_cache/
 .pytest_tmp*/
+.tmp/
 pytest-cache-files-*/
 .pdm-python
 .pdm-build/

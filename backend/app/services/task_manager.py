@@ -21,6 +21,7 @@ class TaskState:
     history: list[ChatHistoryMessage]
     attachments: list[UploadedFileSummary]
     detached_files: list[DetachedFileSummary]
+    web_search: bool
     queue: asyncio.Queue[TaskEvent] = field(default_factory=asyncio.Queue)
     done: bool = False
 
@@ -38,6 +39,7 @@ class TaskManager:
         history: list[ChatHistoryMessage],
         attachments: list[UploadedFileSummary],
         detached_files: list[DetachedFileSummary],
+        web_search: bool = False,
     ) -> str:
         task_id = uuid.uuid4().hex
         state = TaskState(
@@ -48,6 +50,7 @@ class TaskManager:
             history=history,
             attachments=attachments,
             detached_files=detached_files,
+            web_search=web_search,
         )
         self._tasks[task_id] = state
         asyncio.create_task(self._run(state))
@@ -79,6 +82,7 @@ class TaskManager:
                     "history": state.history,
                     "attachments": state.attachments,
                     "detached_files": state.detached_files,
+                    "web_search": state.web_search,
                 }
             )
             answer = result.get("answer") or ""
@@ -101,7 +105,8 @@ class TaskManager:
                     "skill_output": result.get("skill_output"),
                     "skill_outputs": result.get("skill_outputs"),
                     "answer": answer,
-                    "mode": "skill" if result.get("skill_name") else "chat",
+                    "web_sources": result.get("web_sources") or [],
+                    "mode": "web_search" if state.web_search else ("skill" if result.get("skill_name") else "chat"),
                 },
             )
         except Exception as exc:

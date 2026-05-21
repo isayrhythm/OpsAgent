@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     history: list[ChatHistoryMessage] = Field(default_factory=list)
     attachments: list[UploadedFileSummary] = Field(default_factory=list)
     detached_files: list[DetachedFileSummary] = Field(default_factory=list)
+    web_search: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -55,7 +56,7 @@ class SkillSummary(BaseModel):
 
 
 class TaskEvent(BaseModel):
-    type: Literal["progress", "thinking_delta", "answer_delta", "ui_delta", "result", "error"]
+    type: Literal["progress", "thinking_delta", "answer_delta", "ui_delta", "source_delta", "result", "error"]
     step: int
     status: str
     data: Any | None = None

@@ -30,6 +30,8 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
     "当前用户提问是回答范围；history 只作为理解省略对象的上下文。"
     "不要重复回答历史中的其他并列问题，不要把上一轮的限定条件继续当成本轮任务，"
     "除非当前用户明确再次要求。"
+    "如果输入里包含 web_search.context 和 web_search.sources，说明本轮启用了网络搜索；"
+    "总结搜索结果相关内容时，必须在对应句子后使用 sources 中存在的编号引用，格式为 [1]、[2] 或 [1][3]。"
     "If a Skill result already contains ui_blocks, keep the text answer concise and do not repeat the visualized step details."
 )
 

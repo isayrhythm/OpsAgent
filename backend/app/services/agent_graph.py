@@ -18,6 +18,7 @@ from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.result_evaluator import compact_value, evaluate_skill_result
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec, load_skill, load_skill_catalog
+from backend.app.services.web_search import format_web_search_context, search_web, web_search_sources
 
 
 Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
@@ -35,6 +36,9 @@ class AgentState(TypedDict, total=False):
     data_profiles: list[dict[str, Any]]
     skill_output: dict[str, Any]
     skill_outputs: list[dict[str, Any]]
+    web_search: bool
+    web_search_task: Any
+    web_sources: list[dict[str, Any]]
     answer: str
 
 
@@ -69,14 +73,19 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         return f"当前对话已卸载文件：{filenames}。这些文件当前不可用；若历史消息说它们还在，以当前附件状态为准。"
 
     async def intake_uploads_node(state: AgentState) -> AgentState:
+        updates: AgentState = {}
+        if state.get("web_search"):
+            await emit("progress", 1, "正在搜索网页", None)
+            updates["web_search_task"] = asyncio.create_task(search_web(state["message"]))
+
         attachments = state.get("attachments", [])
         if not attachments:
-            return {"attachments": [], "data_profiles": []}
+            return {**updates, "attachments": [], "data_profiles": []}
         await emit("progress", 1, "正在整理上传文件", None)
         ready_attachments = await asyncio.to_thread(ensure_attachment_intakes, attachments)
         data_profiles = profile_uploaded_files(ready_attachments)
         await emit("progress", 2, "上传文件已完成 intake", None)
-        return {"attachments": ready_attachments, "data_profiles": data_profiles}
+        return {**updates, "attachments": ready_attachments, "data_profiles": data_profiles}
 
     async def load_skill_node(state: AgentState) -> AgentState:
         await emit("progress", 2, "正在理解请求", None)
@@ -317,6 +326,22 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         ]
         return compact_value({**value, "result": answer_result})
 
+    async def build_web_context(state: AgentState) -> dict[str, Any]:
+        if not state.get("web_search"):
+            return {"context": "", "sources": []}
+        await emit("progress", 6, "正在整合搜索结果", None)
+        search_task = state.get("web_search_task")
+        search_result = await search_task if search_task else await search_web(state["message"])
+        return {
+            "context": format_web_search_context(search_result),
+            "sources": web_search_sources(search_result),
+        }
+
+    async def emit_web_sources(search_data: dict[str, Any]) -> None:
+        sources = search_data.get("sources") or []
+        if sources:
+            await emit("source_delta", 6, "已获取搜索来源", {"sources": sources})
+
     async def answer_node(state: AgentState) -> AgentState:
         await emit("progress", 6, "正在整理最终回复", None)
         skill_outputs = state.get("skill_outputs", [])
@@ -325,20 +350,60 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             if not llm.available:
                 answer = "当前未配置 DEEPSEEK_API_KEY，无法进行普通对话。"
             else:
-                messages = [
-                    {
-                        "role": "system",
-                        "content": GENERAL_CHAT_SYSTEM_PROMPT,
-                    },
-                    {
-                        "role": "system",
-                        "content": uploaded_files_prompt(state.get("attachments", []))
-                        + ("\n" + detached_files_prompt(state) if detached_files_prompt(state) else "")
-                        + "\n路由判断："
-                        + state.get("route_reason", ""),
-                    },
-                    *llm_history_messages(state),
-                ]
+                web_search_data = await build_web_context(state)
+                await emit_web_sources(web_search_data)
+                web_context = web_search_data["context"]
+                if state.get("web_search"):
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": FINAL_ANSWER_SYSTEM_PROMPT,
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "user_message": state["message"],
+                                    "history": [
+                                        {"role": item.role, "content": item.content}
+                                        for item in state.get("history", [])[-12:]
+                                    ],
+                                    "attachments": attachment_context(state),
+                                    "detached_files": [
+                                        {"file_id": item.file_id, "filename": item.filename}
+                                        for item in state.get("detached_files", [])
+                                    ],
+                                    "data_profiles": state.get("data_profiles", []),
+                                    "web_search": {
+                                        "enabled": True,
+                                        "context": web_context,
+                                        "sources": web_search_data["sources"],
+                                    },
+                                    "skill_name": None,
+                                    "skill_names": [],
+                                    "skill_output": None,
+                                    "skill_outputs": [],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ]
+                else:
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": GENERAL_CHAT_SYSTEM_PROMPT,
+                        },
+                        {
+                            "role": "system",
+                            "content": uploaded_files_prompt(state.get("attachments", []))
+                            + ("\n" + detached_files_prompt(state) if detached_files_prompt(state) else "")
+                            + ("\n" + web_context if web_context else "")
+                            + "\n路由判断："
+                            + state.get("route_reason", ""),
+                        },
+                        *llm_history_messages(state),
+                    ]
                 answer = ""
                 async for delta in llm.stream_chat(
                     messages,
@@ -348,7 +413,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 ):
                     answer += delta
                     await emit("answer_delta", 7, "输出中", {"delta": delta})
-            return {"answer": answer}
+            return {"answer": answer, "web_sources": web_search_data["sources"] if llm.available else []}
 
         if not llm.available:
             answer = json.dumps(
@@ -357,6 +422,9 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 indent=2,
             )
         else:
+            web_search_data = await build_web_context(state)
+            await emit_web_sources(web_search_data)
+            web_context = web_search_data["context"]
             messages = [
                 {
                     "role": "system",
@@ -377,6 +445,11 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                                 for item in state.get("detached_files", [])
                             ],
                             "data_profiles": state.get("data_profiles", []),
+                            "web_search": {
+                                "enabled": bool(state.get("web_search")),
+                                "context": web_context,
+                                "sources": web_search_data["sources"],
+                            },
                             "skill_name": state["skill_name"],
                             "skill_names": state.get("skill_names", []),
                             "skill_output": answer_ready_output(skill_output),
@@ -401,7 +474,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 answer += delta
                 await emit("answer_delta", 7, "输出中", {"delta": delta})
         await emit_ui_blocks(state)
-        return {"answer": answer}
+        return {"answer": answer, "web_sources": web_search_data["sources"] if llm.available else []}
 
     graph.add_node("intake_uploads", intake_uploads_node)
     graph.add_node("load_skills", load_skill_node)
