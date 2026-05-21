@@ -15,6 +15,7 @@ from backend.app.schemas import UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.differential_protein import run_differential_protein_analysis
 from backend.app.services.differential_transcriptomics import run_differential_transcriptomics_analysis
+from backend.app.services.gene_function_research_path import run_gene_function_research_path_query
 from backend.app.services.result_evaluator import compact_value
 from backend.app.services.skill_loader import SkillSpec
 
@@ -227,6 +228,13 @@ async def execute_skill(
     attachments: list[UploadedFileSummary] | None = None,
     data_profiles: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    if skill.name == "query_gene_function_research_path":
+        result = await asyncio.to_thread(run_gene_function_research_path_query, message)
+        return {
+            "mode": "deterministic_query",
+            "result": result,
+        }
+
     if skill.name == "differential_protein_analysis":
         profile_families = {
             str(profile.get("data_family"))

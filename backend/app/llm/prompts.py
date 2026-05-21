@@ -30,6 +30,7 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
     "当前用户提问是回答范围；history 只作为理解省略对象的上下文。"
     "不要重复回答历史中的其他并列问题，不要把上一轮的限定条件继续当成本轮任务，"
     "除非当前用户明确再次要求。"
+    "If a Skill result already contains ui_blocks, keep the text answer concise and do not repeat the visualized step details."
 )
 
 GENERAL_CHAT_SYSTEM_PROMPT = (

@@ -89,6 +89,7 @@ function normalizeSession(session) {
           content: String(message.content || ""),
           createdAt: Number(message.createdAt || Date.now()),
           usage: message.usage,
+          uiBlocks: Array.isArray(message.uiBlocks) ? message.uiBlocks : [],
         }))
       : [],
     attachments: Array.isArray(session.attachments) ? session.attachments : [],
@@ -248,6 +249,25 @@ function normalizeMarkdown(content) {
 
 function renderMarkdown(content, apiBase) {
   return sanitizeMarkdown(marked.parse(normalizeMarkdown(content)), apiBase);
+}
+
+function applyUiDelta(blocks, delta) {
+  const current = Array.isArray(blocks) ? blocks : [];
+  if (delta?.action === "start" && delta.block?.id) {
+    const block = {...delta.block, steps: []};
+    return [...current.filter((item) => item.id !== block.id), block];
+  }
+  if (delta?.action === "step" && delta.block_id && delta.step) {
+    return current.map((block) => {
+      if (block.id !== delta.block_id) {
+        return block;
+      }
+      const stepKey = String(delta.step.step || "");
+      const steps = [...(block.steps || []).filter((step) => String(step.step || "") !== stepKey), delta.step];
+      return {...block, steps};
+    });
+  }
+  return current;
 }
 
 function groupLabel(session) {
@@ -623,6 +643,7 @@ function App() {
       id: crypto.randomUUID(),
       role: "agent",
       content: "",
+      uiBlocks: [],
       createdAt: Date.now(),
       status: "正在提交任务",
       streaming: true,
@@ -696,6 +717,15 @@ function App() {
           usage: normalizeUsage({...messageItem.usage, output: textSize(content)}),
         };
       });
+    });
+
+    source.addEventListener("ui_delta", (event) => {
+      const payload = JSON.parse(event.data);
+      updateMessage(sessionId, messageId, (messageItem) => ({
+        ...messageItem,
+        status: payload.status || messageItem.status,
+        uiBlocks: applyUiDelta(messageItem.uiBlocks, payload.data),
+      }));
     });
 
     source.addEventListener("result", (event) => {
@@ -1007,13 +1037,14 @@ function MessageList({messages, apiBase}) {
 
 function MessageTurn({message, apiBase}) {
   const isUser = message.role === "user";
-  const bubbleClass = `bubble ${!isUser && message.status && !message.content ? "thinking-only" : ""}`;
+  const bubbleClass = `bubble ${!isUser && message.status && !message.content && !message.uiBlocks?.length ? "thinking-only" : ""}`;
   return (
     <article className={`message-turn ${isUser ? "user" : "agent"}`}>
       {!isUser ? <div className="avatar">Ops</div> : null}
       <div className="message-stack">
         <div className={bubbleClass}>
           {!isUser && message.status ? <ThinkingPill text={message.status} /> : null}
+          {!isUser && message.uiBlocks?.length ? <ResearchPathBlocks blocks={message.uiBlocks} /> : null}
           {isUser ? (
             <p>{message.content}</p>
           ) : message.content ? (
@@ -1028,6 +1059,70 @@ function MessageTurn({message, apiBase}) {
         ) : null}
       </div>
     </article>
+  );
+}
+
+function ResearchPathBlocks({blocks}) {
+  return (
+    <div className="research-paths">
+      {blocks
+        .filter((block) => block.type === "gene_function_research_path")
+        .map((block) => (
+          <ResearchPathBlock key={block.id} block={block} />
+        ))}
+    </div>
+  );
+}
+
+function ResearchPathBlock({block}) {
+  return (
+    <section className="research-path">
+      <header className="research-path-head">
+        <div>
+          <p className="research-path-kicker">Gene Function Research Path</p>
+          <h3>{block.gene_id}</h3>
+        </div>
+        {block.paper_id ? <span>{block.paper_id}</span> : null}
+      </header>
+      <p className="research-path-title">{block.title}</p>
+      <div className="research-steps">
+        {(block.steps || []).map((step) => (
+          <ResearchStep key={`${block.id}-${step.step}`} step={step} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ResearchStep({step}) {
+  return (
+    <article className="research-step">
+      <div className="research-step-mark">
+        <strong>{step.step}</strong>
+      </div>
+      <div className="research-step-card">
+        <div className="research-step-top">
+          <h4>{step.stage_operation}</h4>
+          {step.figures ? <span>{step.figures}</span> : null}
+        </div>
+        <ResearchStepField label="Hypothesis" value={step.hypothesis} />
+        <ResearchStepField label="Methods" value={step.methods} />
+        <ResearchStepField label="Results" value={step.results} />
+        <ResearchStepField label="Conclusion" value={step.step_conclusion} />
+      </div>
+    </article>
+  );
+}
+
+function ResearchStepField({label, value}) {
+  if (!value) {
+    return null;
+  }
+  return (
+    <div className="research-step-field">
+      <b>{label}</b>
+      <p>{value}</p>
+    </div>
   );
 }
 

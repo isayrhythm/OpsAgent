@@ -269,10 +269,59 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         outputs = await asyncio.gather(*(run_one_skill(skill, state) for skill in skills))
         return {"skill_output": outputs[0]["output"], "skill_outputs": list(outputs)}
 
+    async def emit_ui_blocks(state: AgentState) -> None:
+        for item in state.get("skill_outputs", []):
+            result = item.get("output", {}).get("result")
+            if not isinstance(result, dict):
+                continue
+            for block in result.get("ui_blocks", []):
+                if not isinstance(block, dict) or block.get("type") != "gene_function_research_path":
+                    continue
+                block_header = {key: value for key, value in block.items() if key != "steps"}
+                await emit("ui_delta", 6, "正在绘制研究路径", {"action": "start", "block": block_header})
+                for step in block.get("steps", []):
+                    if isinstance(step, dict):
+                        await emit(
+                            "ui_delta",
+                            6,
+                            "正在绘制研究路径",
+                            {"action": "step", "block_id": block.get("id"), "step": step},
+                        )
+
+    def answer_ready_output(value: Any) -> Any:
+        if not isinstance(value, dict):
+            return compact_value(value)
+        result = value.get("result")
+        if not isinstance(result, dict) or not result.get("ui_blocks"):
+            return compact_value(value)
+        answer_result = {key: item for key, item in result.items() if key not in {"matches", "ui_blocks"}}
+        answer_result["matches"] = [
+            {
+                "paper_id": match.get("paper_id"),
+                "title": match.get("title"),
+                "gene_id": match.get("gene_id"),
+                "step_count": len(match.get("steps", [])),
+            }
+            for match in result.get("matches", [])
+            if isinstance(match, dict)
+        ]
+        answer_result["visualized_ui_blocks"] = [
+            {
+                "type": block.get("type"),
+                "gene_id": block.get("gene_id"),
+                "title": block.get("title"),
+                "step_count": len(block.get("steps", [])),
+            }
+            for block in result.get("ui_blocks", [])
+            if isinstance(block, dict)
+        ]
+        return compact_value({**value, "result": answer_result})
+
     async def answer_node(state: AgentState) -> AgentState:
         await emit("progress", 6, "正在整理最终回复", None)
         skill_outputs = state.get("skill_outputs", [])
         skill_output = state.get("skill_output")
+        await emit_ui_blocks(state)
         if skill_output is None and not skill_outputs:
             if not llm.available:
                 answer = "当前未配置 DEEPSEEK_API_KEY，无法进行普通对话。"
@@ -331,8 +380,13 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                             "data_profiles": state.get("data_profiles", []),
                             "skill_name": state["skill_name"],
                             "skill_names": state.get("skill_names", []),
-                            "skill_output": compact_value(skill_output),
-                            "skill_outputs": compact_value(skill_outputs),
+                            "skill_output": answer_ready_output(skill_output),
+                            "skill_outputs": [
+                                {**item, "output": answer_ready_output(item.get("output"))}
+                                if isinstance(item, dict)
+                                else compact_value(item)
+                                for item in skill_outputs
+                            ],
                         },
                         ensure_ascii=False,
                     ),
