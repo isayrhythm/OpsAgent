@@ -14,6 +14,7 @@ from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from backend.app.schemas import UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.differential_protein import run_differential_protein_analysis
+from backend.app.services.differential_transcriptomics import run_differential_transcriptomics_analysis
 from backend.app.services.result_evaluator import compact_value
 from backend.app.services.skill_loader import SkillSpec
 
@@ -241,6 +242,26 @@ async def execute_skill(
                 },
             }
         result = await asyncio.to_thread(run_differential_protein_analysis, message, attachments or [])
+        return {
+            "mode": "deterministic_analysis",
+            "result": result,
+        }
+
+    if skill.name == "differential_transcriptomics_analysis":
+        profile_families = {
+            str(profile.get("data_family"))
+            for profile in (data_profiles or [])
+            if profile.get("status") in {"profiled", "ready"}
+        }
+        if profile_families and "transcriptomics" not in profile_families:
+            return {
+                "mode": "deterministic_analysis",
+                "result": {
+                    "error": "上传文件没有被识别为转录组 counts 表达矩阵，不能调用转录组差异分析。",
+                    "data_profiles": data_profiles or [],
+                },
+            }
+        result = await asyncio.to_thread(run_differential_transcriptomics_analysis, message, attachments or [])
         return {
             "mode": "deterministic_analysis",
             "result": result,

@@ -62,7 +62,7 @@ def test_intake_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path
     source.write_text(
         "\n".join(
             [
-                "\tMT1\tMT2\tWT1\tWT2",
+                "\tMT-D1\tMT-D2\tWT-D1\tWT-D2",
                 "AGIS_Os01g000010\t3591\t3659\t3444\t2936",
                 "AGIS_Os01g000020\t22\t22\t8\t10",
                 "AGIS_Os01g000030\t400\t360\t416\t323",
@@ -83,5 +83,7 @@ def test_intake_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path
 
     assert intake["status"] == "ready"
     assert intake["data_family"] == "transcriptomics"
+    assert intake["recommended_skills"] == ["differential_transcriptomics_analysis"]
+    assert intake["sample_groups"] == {"MT-D": ["MT-D1", "MT-D2"], "WT-D": ["WT-D1", "WT-D2"]}
     assert intake["feature_count"] == 3
     assert "AGIS_Os01g000010" in matrix_text

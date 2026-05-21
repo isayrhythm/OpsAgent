@@ -13,7 +13,7 @@ from backend.app.schemas import UploadedFileSummary
 
 SUPPORTED_TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm"}
 DEFAULT_MAX_INTAKE_ATTEMPTS = 3
-INTAKE_VERSION = 2
+INTAKE_VERSION = 3
 
 
 def ensure_attachment_intakes(attachments: list[UploadedFileSummary]) -> list[UploadedFileSummary]:
@@ -211,12 +211,12 @@ def infer_sample_groups(sample_columns: list[str]) -> dict[str, list[str]]:
 
 def sample_group_label(sample: str) -> str:
     value = sample.strip()
-    match = re.match(r"^([A-Za-z]+)", value)
-    if match:
-        return match.group(1)
     match = re.match(r"^(.+?)[_\-. ]?\d+", value)
     if match:
         return match.group(1).strip("_-. ")
+    match = re.match(r"^([A-Za-z]+)", value)
+    if match:
+        return match.group(1)
     return re.split(r"[_\-. ]", value)[0]
 
 
@@ -268,12 +268,16 @@ def detect_data_family(frame: pd.DataFrame, data_type: str) -> str:
 def recommend_skills(data_family: str, data_type: str) -> list[str]:
     if data_family == "proteomics" and data_type == "expression_matrix":
         return ["differential_protein_analysis"]
+    if data_family == "transcriptomics" and data_type == "expression_matrix":
+        return ["differential_transcriptomics_analysis"]
     return []
 
 
 def capabilities_for_profile(profile: dict[str, Any]) -> list[str]:
     if profile.get("data_family") == "proteomics" and profile.get("data_type") == "expression_matrix":
         return ["differential_protein_analysis", "volcano_report", "heatmap_report"]
+    if profile.get("data_family") == "transcriptomics" and profile.get("data_type") == "expression_matrix":
+        return ["differential_transcriptomics_analysis", "volcano_report", "heatmap_report"]
     if profile.get("data_type") == "expression_matrix":
         return ["expression_matrix_ready"]
     return []
