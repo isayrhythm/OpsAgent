@@ -31,6 +31,8 @@ data_paths: uploaded proteomics expression matrix
 
 ## R Execution
 
+Command-line script: `backend/app/r/differential_protein.R`.
+
 R 输入固定为 intake 产出的两个文件：
 
 - `standard_matrix.csv`：前三列为 `feature_id`、`feature_name`、`description`，其余列为样本定量值。

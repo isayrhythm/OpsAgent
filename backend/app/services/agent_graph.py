@@ -147,9 +147,18 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 llm=llm,
                 error=first_error,
             )
-            if evaluation.get("category") != "retry_code":
+            if evaluation.get("category") != "retry_code" or skill.execution_mode.startswith("deterministic"):
                 await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
-                raise
+                return {
+                    "skill_name": skill.name,
+                    "output": {
+                        "mode": "execution_failed",
+                        "result": None,
+                        "error": first_error,
+                        "code": first_code,
+                        "evaluation": evaluation,
+                    },
+                }
             await emit(
                 "progress",
                 5,
