@@ -22,7 +22,9 @@ class TaskState:
     attachments: list[UploadedFileSummary]
     detached_files: list[DetachedFileSummary]
     web_search: bool
-    queue: asyncio.Queue[TaskEvent] = field(default_factory=asyncio.Queue)
+    events: list[TaskEvent] = field(default_factory=list)
+    condition: asyncio.Condition = field(default_factory=asyncio.Condition)
+    runner: asyncio.Task[None] | None = None
     done: bool = False
 
 
@@ -53,14 +55,28 @@ class TaskManager:
             web_search=web_search,
         )
         self._tasks[task_id] = state
-        asyncio.create_task(self._run(state))
+        state.runner = asyncio.create_task(self._run(state))
         return task_id
 
     def get(self, task_id: str) -> TaskState | None:
         return self._tasks.get(task_id)
 
+    def cancel(self, task_id: str) -> bool:
+        state = self.get(task_id)
+        if state is None or state.done or state.runner is None or state.runner.done():
+            return False
+        state.runner.cancel()
+        return True
+
     async def _emit(self, state: TaskState, event_type: str, step: int, status: str, data: Any = None) -> None:
-        await state.queue.put(TaskEvent(type=event_type, step=step, status=status, data=data))
+        async with state.condition:
+            state.events.append(TaskEvent(type=event_type, step=step, status=status, data=data))
+            state.condition.notify_all()
+
+    async def _mark_done(self, state: TaskState) -> None:
+        async with state.condition:
+            state.done = True
+            state.condition.notify_all()
 
     async def _run(self, state: TaskState) -> None:
         llm = DeepSeekClient()
@@ -109,7 +125,9 @@ class TaskManager:
                     "mode": "web_search" if state.web_search else ("skill" if result.get("skill_name") else "chat"),
                 },
             )
+        except asyncio.CancelledError:
+            await self._emit(state, "cancelled", 999, "任务已停止")
         except Exception as exc:
             await self._emit(state, "error", 999, f"任务失败: {exc}")
         finally:
-            state.done = True
+            await self._mark_done(state)

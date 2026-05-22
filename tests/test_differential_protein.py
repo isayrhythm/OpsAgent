@@ -33,9 +33,7 @@ def test_report_uses_local_plotly_for_interactive_plots() -> None:
     assert "displayModeBar:false" in report
     assert "Clustered protein axis" in report
     assert "p-value &lt; 0.01" in report
-
-
 def test_analysis_parameters_accept_explicit_thresholds() -> None:
-    parameters = _analysis_parameters("pvalue 改为0.01，fold change 阈值设为 2 跑一遍")
+    parameters = _analysis_parameters({"pvalue_cutoff": 0.01, "fold_change_cutoff": 2})
 
     assert parameters == {"pvalue_cutoff": 0.01, "fold_change_cutoff": 2.0}

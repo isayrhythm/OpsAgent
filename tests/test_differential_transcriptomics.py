@@ -14,14 +14,14 @@ def test_transcriptomics_auto_pairs_treatment_groups() -> None:
             "MT-C": ["MT-C1", "MT-C2"],
             "WT-C": ["WT-C1", "WT-C2", "WT-C3"],
         },
-        "做转录组差异分析",
+        {},
     )
 
     assert [item["comparison"] for item in comparisons] == ["MT-C vs WT-C", "MT-D vs WT-D"]
 
 
 def test_transcriptomics_parameters_accept_padj_and_log2fc_thresholds() -> None:
-    parameters = _analysis_parameters("FDR 设为0.01，log2 fold change 阈值改为 1.5")
+    parameters = _analysis_parameters({"padj_cutoff": 0.01, "log2_fc_cutoff": 1.5})
 
     assert parameters == {"padj_cutoff": 0.01, "log2_fc_cutoff": 1.5}
 

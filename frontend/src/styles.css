@@ -1108,6 +1108,14 @@ button {
   color: white;
 }
 
+.stop-button {
+  background: #9b392f;
+}
+
+.stop-button:hover {
+  background: #802d25;
+}
+
 .send-button:disabled {
   cursor: not-allowed;
   opacity: 0.34;

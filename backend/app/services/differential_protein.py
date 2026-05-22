@@ -29,14 +29,14 @@ DEFAULT_FOLD_CHANGE_CUTOFF = 1.5
 
 
 def run_differential_protein_analysis(
-    message: str,
     attachments: list[UploadedFileSummary],
+    arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    intake = _select_ready_intake(message, attachments)
+    intake = _select_ready_intake(attachments, arguments or {})
     if "error" in intake:
         return intake
 
-    parameters = _analysis_parameters(message)
+    parameters = _analysis_parameters(arguments or {})
     run_id = uuid.uuid4().hex
     output_dir = MEMORY_DIR / "artifacts" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -124,7 +124,7 @@ def artifact_path(run_id: str, filename: str) -> Path:
     return target
 
 
-def _select_ready_intake(message: str, attachments: list[UploadedFileSummary]) -> dict[str, Any]:
+def _select_ready_intake(attachments: list[UploadedFileSummary], arguments: dict[str, Any]) -> dict[str, Any]:
     selected: UploadedFileSummary | None = None
     for item in attachments:
         intake = item.intake or {}
@@ -163,7 +163,7 @@ def _select_ready_intake(message: str, attachments: list[UploadedFileSummary]) -
         for group, samples in groups.items()
         if isinstance(samples, list)
     }
-    group_a, group_b = _choose_comparison(groups, message)
+    group_a, group_b = _choose_comparison(groups, arguments)
     if not group_a or not group_b:
         return {
             "error": "无法确定需要比较的两个分组，请在问题中明确写出分组名。",
@@ -191,56 +191,34 @@ def _select_ready_intake(message: str, attachments: list[UploadedFileSummary]) -
     }
 
 
-def _choose_comparison(groups: dict[str, list[str]], message: str) -> tuple[str | None, str | None]:
+def _choose_comparison(groups: dict[str, list[str]], arguments: dict[str, Any]) -> tuple[str | None, str | None]:
+    group_a = str(arguments.get("group_a") or "")
+    group_b = str(arguments.get("group_b") or "")
+    if group_a in groups and group_b in groups and group_a != group_b:
+        return group_a, group_b
     if len(groups) == 2:
         names = list(groups)
         return names[0], names[1]
-
-    mentioned = [group for group in groups if re.search(rf"\b{re.escape(group)}\b", message, re.I)]
-    if len(mentioned) == 2:
-        return mentioned[0], mentioned[1]
     return None
 
 
-def _analysis_parameters(message: str) -> dict[str, float]:
+def _analysis_parameters(arguments: dict[str, Any]) -> dict[str, float]:
     return {
-        "pvalue_cutoff": _message_cutoff(
-            message,
-            (
-                r"\bp\s*[-_ ]?value\b",
-                r"\bpvalue\b",
-                r"\bp\s*值\b",
-                r"p值",
-            ),
-            DEFAULT_PVALUE_CUTOFF,
-            lambda value: 0 < value < 1,
-        ),
-        "fold_change_cutoff": _message_cutoff(
-            message,
-            (
-                r"\bfold\s*[-_ ]?change\b",
-                r"\bfc\b",
-                r"倍数",
-            ),
+        "pvalue_cutoff": _argument_cutoff(arguments.get("pvalue_cutoff"), DEFAULT_PVALUE_CUTOFF, lambda value: 0 < value < 1),
+        "fold_change_cutoff": _argument_cutoff(
+            arguments.get("fold_change_cutoff"),
             DEFAULT_FOLD_CHANGE_CUTOFF,
             lambda value: value >= 1,
         ),
     }
 
 
-def _message_cutoff(
-    message: str,
-    names: tuple[str, ...],
-    default: float,
-    valid: Any,
-) -> float:
-    name = "(?:" + "|".join(names) + ")"
-    separator = r"(?:\s*(?:cutoff|threshold|阈值))?\s*(?:改为|设为|设置为|调整为|重设为|=|<=|>=|<|>|:|：)?\s*"
-    match = re.search(name + separator + r"([0-9]+(?:\.[0-9]+)?(?:e-?[0-9]+)?)", message, re.I)
-    if not match:
+def _argument_cutoff(value: Any, default: float, valid: Any) -> float:
+    try:
+        cutoff = float(value)
+    except (TypeError, ValueError):
         return default
-    value = float(match.group(1))
-    return value if valid(value) else default
+    return cutoff if valid(cutoff) else default
 
 
 def _find_rscript() -> Path | None:

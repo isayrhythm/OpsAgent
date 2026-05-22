@@ -86,15 +86,25 @@ function normalizeSession(session) {
     pinnedAt: session.pinnedAt || null,
     webSearchEnabled: Boolean(session.webSearchEnabled),
     messages: Array.isArray(session.messages)
-      ? session.messages.map((message) => ({
-          id: message.id || crypto.randomUUID(),
-          role: message.role === "assistant" ? "agent" : message.role,
-          content: String(message.content || ""),
-          createdAt: Number(message.createdAt || Date.now()),
-          usage: message.usage,
-          uiBlocks: Array.isArray(message.uiBlocks) ? message.uiBlocks : [],
-          webSources: Array.isArray(message.webSources) ? message.webSources : [],
-        }))
+      ? session.messages.map((message) => {
+          const taskId = String(message.taskId || "");
+          const eventsUrl = String(message.eventsUrl || "");
+          const resumable = Boolean(message.streaming && taskId && eventsUrl);
+          const disconnected = Boolean(message.streaming && !resumable && !message.content);
+          return {
+            id: message.id || crypto.randomUUID(),
+            role: message.role === "assistant" ? "agent" : message.role,
+            content: String(message.content || ""),
+            createdAt: Number(message.createdAt || Date.now()),
+            usage: message.usage,
+            uiBlocks: Array.isArray(message.uiBlocks) ? message.uiBlocks : [],
+            webSources: Array.isArray(message.webSources) ? message.webSources : [],
+            status: message.status || (disconnected ? "任务连接已中断，请重新发送" : null),
+            streaming: resumable,
+            taskId: resumable ? taskId : null,
+            eventsUrl: resumable ? eventsUrl : null,
+          };
+        })
       : [],
     attachments: Array.isArray(session.attachments) ? session.attachments : [],
     detachedFiles: Array.isArray(session.detachedFiles) ? session.detachedFiles : [],
@@ -436,6 +446,7 @@ function App() {
   const fileInputRef = React.useRef(null);
   const dragDepthRef = React.useRef(0);
   const sourceCacheRef = React.useRef(new Map());
+  const taskSourcesRef = React.useRef(new Map());
   const uiDeltaQueuesRef = React.useRef(new Map());
   const uiDeltaTimersRef = React.useRef(new Map());
 
@@ -444,6 +455,9 @@ function App() {
     [sessions, activeSessionId],
   );
   const webSearchEnabled = activeSession ? Boolean(activeSession.webSearchEnabled) : draftWebSearchEnabled;
+  const activeTaskMessage = [...(activeSession?.messages || [])]
+    .reverse()
+    .find((message) => message.role === "agent" && message.streaming && message.taskId && message.eventsUrl);
 
   React.useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 30)));
@@ -470,6 +484,10 @@ function App() {
       for (const timer of uiDeltaTimersRef.current.values()) {
         window.clearTimeout(timer);
       }
+      for (const source of taskSourcesRef.current.values()) {
+        source.close();
+      }
+      taskSourcesRef.current.clear();
       uiDeltaTimersRef.current.clear();
       uiDeltaQueuesRef.current.clear();
     },
@@ -485,6 +503,25 @@ function App() {
       node.scrollTop = node.scrollHeight;
     });
   }, [activeSession?.messages, activeSessionId]);
+
+  React.useEffect(() => {
+    for (const session of sessions) {
+      for (const message of session.messages || []) {
+        if (!message.streaming || !message.eventsUrl || !message.taskId || taskSourcesRef.current.has(message.id)) {
+          continue;
+        }
+        updateMessage(session.id, message.id, (messageItem) => ({
+          ...messageItem,
+          content: "",
+          status: "正在恢复任务",
+          uiBlocks: [],
+          webSources: [],
+          usage: normalizeUsage({...messageItem.usage, internal: 0, output: 0}),
+        }));
+        listenToTask(message.eventsUrl, session.id, message.id);
+      }
+    }
+  }, [sessions, apiBase]);
 
   function normalizedApiBase() {
     return apiBase.trim().replace(/\/$/, "");
@@ -829,6 +866,11 @@ function App() {
         throw new Error(`HTTP ${response.status}`);
       }
       const payload = await response.json();
+      updateMessage(session.id, assistantMessage.id, (messageItem) => ({
+        ...messageItem,
+        taskId: payload.task_id,
+        eventsUrl: payload.events_url,
+      }));
       listenToTask(payload.events_url, session.id, assistantMessage.id);
     } catch (error) {
       updateMessage(session.id, assistantMessage.id, (messageItem) => ({
@@ -842,8 +884,12 @@ function App() {
   }
 
   function listenToTask(eventsUrl, sessionId, messageId) {
+    if (taskSourcesRef.current.has(messageId)) {
+      return;
+    }
     const source = new EventSource(`${normalizedApiBase()}${eventsUrl}`);
     const activeAgents = new Map();
+    taskSourcesRef.current.set(messageId, source);
     sourceCacheRef.current.delete(messageId);
 
     source.addEventListener("progress", (event) => {
@@ -912,6 +958,19 @@ function App() {
       });
     });
 
+    source.addEventListener("cancelled", (event) => {
+      const payload = JSON.parse(event.data);
+      updateMessage(sessionId, messageId, (messageItem) => ({
+        ...messageItem,
+        content: messageItem.content || "已停止当前任务。",
+        status: payload.status || null,
+        streaming: false,
+      }));
+      setSubmitting(false);
+      taskSourcesRef.current.delete(messageId);
+      source.close();
+    });
+
     source.addEventListener("error", (event) => {
       const payload = event.data ? JSON.parse(event.data) : {status: "SSE connection failed"};
       updateMessage(sessionId, messageId, (messageItem) => ({
@@ -921,6 +980,7 @@ function App() {
         streaming: false,
       }));
       setSubmitting(false);
+      taskSourcesRef.current.delete(messageId);
       source.close();
     });
 
@@ -931,9 +991,31 @@ function App() {
         streaming: false,
       }));
       setSubmitting(false);
+      taskSourcesRef.current.delete(messageId);
       source.close();
       checkApi();
     });
+  }
+
+  async function cancelTask() {
+    if (!activeSession || !activeTaskMessage?.taskId) {
+      return;
+    }
+    updateMessage(activeSession.id, activeTaskMessage.id, (messageItem) => ({
+      ...messageItem,
+      status: "正在停止任务",
+    }));
+    try {
+      const response = await fetch(`${normalizedApiBase()}/api/tasks/${activeTaskMessage.taskId}/cancel`, {method: "POST"});
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      updateMessage(activeSession.id, activeTaskMessage.id, (messageItem) => ({
+        ...messageItem,
+        status: `停止失败：${error.message}`,
+      }));
+    }
   }
 
   return (
@@ -973,7 +1055,9 @@ function App() {
           value={input}
           onChange={setInput}
           onSubmit={submitMessage}
-          disabled={submitting || uploading}
+          disabled={submitting || uploading || Boolean(activeTaskMessage)}
+          canCancel={Boolean(activeTaskMessage)}
+          onCancel={cancelTask}
           uploading={uploading}
           uploadStatus={uploadStatus}
           webSearchEnabled={webSearchEnabled}
@@ -1315,6 +1399,8 @@ function Composer({
   onChange,
   onSubmit,
   disabled,
+  canCancel,
+  onCancel,
   uploading,
   uploadStatus,
   webSearchEnabled,
@@ -1382,9 +1468,15 @@ function Composer({
             }
           }}
         />
-        <button className="send-button" type="submit" disabled={disabled || !value.trim()} aria-label="发送">
-          <SendIcon />
-        </button>
+        {canCancel ? (
+          <button className="send-button stop-button" type="button" onClick={onCancel} aria-label="停止当前任务">
+            <StopIcon />
+          </button>
+        ) : (
+          <button className="send-button" type="submit" disabled={disabled || !value.trim()} aria-label="发送">
+            <SendIcon />
+          </button>
+        )}
         <div className="composer-actions">
           <button
             className={`composer-mode ${webSearchEnabled ? "active" : ""}`}
@@ -1427,6 +1519,14 @@ function SendIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 12h14" />
       <path d="m13 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="1.5" />
     </svg>
   );
 }

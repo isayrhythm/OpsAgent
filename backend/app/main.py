@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -78,24 +78,40 @@ async def upload_files(
 
 
 @app.get("/api/tasks/{task_id}/events")
-async def task_events(task_id: str) -> StreamingResponse:
+async def task_events(task_id: str, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
     state = tasks.get(task_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
     async def stream():
+        cursor = _event_cursor(last_event_id)
         while True:
-            if state.done and state.queue.empty():
+            while cursor < len(state.events):
+                event = state.events[cursor]
+                cursor += 1
+                yield f"id: {cursor}\nevent: {event.type}\ndata: {event.model_dump_json()}\n\n"
+            if state.done:
                 yield "event: end\ndata: {}\n\n"
                 break
-            try:
-                event = await asyncio.wait_for(state.queue.get(), timeout=15)
-            except asyncio.TimeoutError:
+            async with state.condition:
+                if cursor < len(state.events) or state.done:
+                    continue
+                try:
+                    await asyncio.wait_for(state.condition.wait(), timeout=15)
+                except asyncio.TimeoutError:
+                    pass
+            if cursor >= len(state.events) and not state.done:
                 yield "event: ping\ndata: {}\n\n"
-                continue
-            yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str) -> dict[str, str | bool]:
+    state = tasks.get(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"task_id": task_id, "cancelled": tasks.cancel(task_id)}
 
 
 @app.get("/api/uploads/{task_id}/events")
@@ -128,3 +144,10 @@ async def artifact(run_id: str, filename: str) -> FileResponse:
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     return FileResponse(path)
+
+
+def _event_cursor(last_event_id: str | None) -> int:
+    try:
+        return max(0, int(last_event_id or "0"))
+    except ValueError:
+        return 0

@@ -1,8 +1,11 @@
+import asyncio
 import json
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
+from backend.app.schemas import TaskEvent
 
 
 def test_upload_endpoint_returns_file_metadata(tmp_path, monkeypatch) -> None:
@@ -107,3 +110,56 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     assert calls["attachments"][0].filename == "a.txt"
     assert calls["detached_files"][0].filename == "removed.csv"
     assert calls["web_search"] is True
+
+
+def test_cancel_endpoint_delegates_to_task_manager(monkeypatch) -> None:
+    from backend.app import main
+
+    calls = {}
+
+    class FakeTasks:
+        def get(self, task_id):
+            calls["get"] = task_id
+            return SimpleNamespace(done=False)
+
+        def cancel(self, task_id):
+            calls["cancel"] = task_id
+            return True
+
+    monkeypatch.setattr(main, "tasks", FakeTasks())
+    client = TestClient(app)
+
+    response = client.post("/api/tasks/task-stop/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == {"task_id": "task-stop", "cancelled": True}
+    assert calls == {"get": "task-stop", "cancel": "task-stop"}
+
+
+def test_task_events_replay_only_events_after_last_event_id(monkeypatch) -> None:
+    from backend.app import main
+
+    state = SimpleNamespace(
+        events=[
+            TaskEvent(type="progress", step=1, status="开始"),
+            TaskEvent(type="answer_delta", step=7, status="输出中", data={"delta": "answer"}),
+            TaskEvent(type="result", step=7, status="完成", data={"answer": "answer"}),
+        ],
+        done=True,
+        condition=asyncio.Condition(),
+    )
+
+    class FakeTasks:
+        def get(self, task_id):
+            return state if task_id == "task-replay" else None
+
+    monkeypatch.setattr(main, "tasks", FakeTasks())
+    client = TestClient(app)
+
+    response = client.get("/api/tasks/task-replay/events", headers={"Last-Event-ID": "1"})
+
+    assert response.status_code == 200
+    assert "event: progress" not in response.text
+    assert "event: answer_delta" in response.text
+    assert "event: result" in response.text
+    assert "event: end" in response.text

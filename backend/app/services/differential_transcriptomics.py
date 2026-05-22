@@ -25,14 +25,14 @@ DEFAULT_LOG2_FC_CUTOFF = 1.0
 
 
 def run_differential_transcriptomics_analysis(
-    message: str,
     attachments: list[UploadedFileSummary],
+    arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     intake = _select_ready_intake(attachments)
     if "error" in intake:
         return intake
 
-    comparisons = _choose_comparisons(intake["groups"], message)
+    comparisons = _choose_comparisons(intake["groups"], arguments or {})
     if not comparisons:
         return {
             "error": "无法确定转录组差异分析比较组，请在问题中明确两个分组，或上传可自动配对的分组矩阵。",
@@ -40,7 +40,7 @@ def run_differential_transcriptomics_analysis(
             "filename": intake["filename"],
         }
 
-    parameters = _analysis_parameters(message)
+    parameters = _analysis_parameters(arguments or {})
     run_id = uuid.uuid4().hex
     output_dir = MEMORY_DIR / "artifacts" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -159,10 +159,19 @@ def _select_ready_intake(attachments: list[UploadedFileSummary]) -> dict[str, An
     }
 
 
-def _choose_comparisons(groups: dict[str, list[str]], message: str) -> list[dict[str, str]]:
-    mentioned = [group for group in groups if re.search(rf"(?<!\w){re.escape(group)}(?!\w)", message, re.I)]
-    if len(mentioned) == 2:
-        return [_comparison(mentioned[0], mentioned[1])]
+def _choose_comparisons(groups: dict[str, list[str]], arguments: dict[str, Any]) -> list[dict[str, str]]:
+    requested = []
+    for item in arguments.get("comparisons") or []:
+        if not isinstance(item, dict):
+            continue
+        numerator = str(item.get("numerator") or "")
+        denominator = str(item.get("denominator") or "")
+        if numerator in groups and denominator in groups and numerator != denominator:
+            comparison = _comparison(numerator, denominator)
+            if comparison not in requested:
+                requested.append(comparison)
+    if requested:
+        return requested
     if len(groups) == 2:
         names = list(groups)
         return [_comparison(names[0], names[1])]
@@ -205,44 +214,23 @@ def _slug(value: str) -> str:
     return cleaned or "comparison"
 
 
-def _analysis_parameters(message: str) -> dict[str, float]:
+def _analysis_parameters(arguments: dict[str, Any]) -> dict[str, float]:
     return {
-        "padj_cutoff": _message_cutoff(
-            message,
-            (
-                r"\bpadj\b",
-                r"\bfdr\b",
-                r"\badjusted\s*p(?:\s*[-_ ]?value)?\b",
-                r"\bp\s*[-_ ]?value\b",
-                r"\bpvalue\b",
-                r"校正\s*p\s*值",
-                r"p值",
-            ),
-            DEFAULT_PADJ_CUTOFF,
-            lambda value: 0 < value < 1,
-        ),
-        "log2_fc_cutoff": _message_cutoff(
-            message,
-            (
-                r"\blog2\s*[-_ ]?(?:fold\s*[-_ ]?change|fc)\b",
-                r"\blfc\b",
-                r"log2fc",
-                r"log2\s*倍数",
-            ),
+        "padj_cutoff": _argument_cutoff(arguments.get("padj_cutoff"), DEFAULT_PADJ_CUTOFF, lambda value: 0 < value < 1),
+        "log2_fc_cutoff": _argument_cutoff(
+            arguments.get("log2_fc_cutoff"),
             DEFAULT_LOG2_FC_CUTOFF,
             lambda value: value >= 0,
         ),
     }
 
 
-def _message_cutoff(message: str, names: tuple[str, ...], default: float, valid: Any) -> float:
-    name = "(?:" + "|".join(names) + ")"
-    separator = r"(?:\s*(?:cutoff|threshold|阈值))?\s*(?:改为|设为|设置为|调整为|重设为|=|<=|>=|<|>|:|：)?\s*"
-    match = re.search(name + separator + r"([0-9]+(?:\.[0-9]+)?(?:e-?[0-9]+)?)", message, re.I)
-    if not match:
+def _argument_cutoff(value: Any, default: float, valid: Any) -> float:
+    try:
+        cutoff = float(value)
+    except (TypeError, ValueError):
         return default
-    value = float(match.group(1))
-    return value if valid(value) else default
+    return cutoff if valid(cutoff) else default
 
 
 def _find_rscript() -> Path | None:

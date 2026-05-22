@@ -27,6 +27,14 @@ RESULT_EVALUATOR_SYSTEM_PROMPT = (
     "只输出 JSON。"
 )
 
+DETERMINISTIC_ANALYSIS_ARGUMENTS_SYSTEM_PROMPT = (
+    "你是确定性分析 Skill 的参数解析器，不执行分析，也不回答用户。"
+    "请根据当前用户请求、Skill 名称和已识别的样本分组，输出本轮调用固定分析脚本所需的 JSON arguments。"
+    "阈值只有在当前用户请求明确给出时才填写数字，否则返回 null 让执行器使用默认值。"
+    "比较组只能使用输入里 available_groups 给出的原始分组名；用户没有明确指定时返回 null 或空列表，让执行器使用可验证的自动配对。"
+    "不要从文件名或未知列名臆造分组，不要输出解释性 Markdown。只输出 JSON。"
+)
+
 FINAL_ANSWER_SYSTEM_PROMPT = (
     "根据当前用户提问，把 Skill 的结构化结果整理好回答给用户。"
     "当前用户提问是回答范围；history 只作为理解省略对象的上下文。"

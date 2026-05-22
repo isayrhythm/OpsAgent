@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from backend.app.schemas import UploadedFileSummary
+from backend.app.services.differential_arguments import resolve_differential_arguments
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.differential_protein import run_differential_protein_analysis
 from backend.app.services.differential_transcriptomics import run_differential_transcriptomics_analysis
@@ -253,7 +254,10 @@ async def execute_skill(
                     "data_profiles": profiles,
                 },
             }
-        result = await asyncio.to_thread(run_differential_protein_analysis, message, attachments or [])
+        if emit is not None:
+            await emit("progress", 5, f"正在解析 {skill.name} 调用参数", {"agent": skill.name, "agent_state": "running"})
+        arguments = await resolve_differential_arguments(message, skill.name, profiles, llm, emit)
+        result = await asyncio.to_thread(run_differential_protein_analysis, attachments or [], arguments)
         return {
             "mode": "deterministic_analysis",
             "result": result,
@@ -277,7 +281,10 @@ async def execute_skill(
                     "data_profiles": profiles,
                 },
             }
-        result = await asyncio.to_thread(run_differential_transcriptomics_analysis, message, attachments or [])
+        if emit is not None:
+            await emit("progress", 5, f"正在解析 {skill.name} 调用参数", {"agent": skill.name, "agent_state": "running"})
+        arguments = await resolve_differential_arguments(message, skill.name, profiles, llm, emit)
+        result = await asyncio.to_thread(run_differential_transcriptomics_analysis, attachments or [], arguments)
         return {
             "mode": "deterministic_analysis",
             "result": result,

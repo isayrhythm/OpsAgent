@@ -56,7 +56,7 @@ class SkillSummary(BaseModel):
 
 
 class TaskEvent(BaseModel):
-    type: Literal["progress", "thinking_delta", "answer_delta", "ui_delta", "source_delta", "result", "error"]
+    type: Literal["progress", "thinking_delta", "answer_delta", "ui_delta", "source_delta", "result", "cancelled", "error"]
     step: int
     status: str
     data: Any | None = None
