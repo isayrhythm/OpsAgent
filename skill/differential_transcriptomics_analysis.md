@@ -4,6 +4,10 @@ version: 1
 description: 对上传的 RNA-seq counts 表达矩阵进行 DESeq2 差异转录组分析，并生成可点击 HTML 报告
 trigger: 用户上传 transcriptomics/RNA-seq counts 基因表达矩阵，要求差异基因分析、差异表达分析、DESeq2 分析、火山图、热图、上调下调基因，或调整 padj/FDR/log2 fold change 阈值后重跑
 execution_mode: deterministic_python_r
+executor: differential_transcriptomics_analysis
+argument_resolver: differential_analysis_json
+input_schema: skill/schemas/differential_transcriptomics_analysis.input.json
+output_schema: skill/schemas/differential_transcriptomics_analysis.output.json
 data_paths: uploaded transcriptomics counts expression matrix
 ---
 

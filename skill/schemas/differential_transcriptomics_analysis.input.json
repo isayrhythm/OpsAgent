@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["comparisons", "padj_cutoff", "log2_fc_cutoff", "reason"],
+  "properties": {
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["numerator", "denominator"],
+        "properties": {
+          "numerator": {
+            "type": "string"
+          },
+          "denominator": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "padj_cutoff": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "log2_fc_cutoff": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

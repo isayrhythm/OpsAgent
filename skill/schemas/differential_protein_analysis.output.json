@@ -1,0 +1,29 @@
+{
+  "anyOf": [
+    {
+      "type": "object",
+      "required": ["error"]
+    },
+    {
+      "type": "object",
+      "required": ["status", "analysis", "parameters", "comparisons", "files"],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "analysis": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "comparisons": {
+          "type": "array"
+        },
+        "files": {
+          "type": "object"
+        }
+      }
+    }
+  ]
+}

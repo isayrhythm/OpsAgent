@@ -57,11 +57,19 @@ def _group(value: Any, available: set[str]) -> str | None:
 
 def _protein_arguments(value: dict[str, Any], groups: list[str]) -> dict[str, Any]:
     available = set(groups)
-    group_a = _group(value.get("group_a"), available)
-    group_b = _group(value.get("group_b"), available)
+    comparisons: list[dict[str, str]] = []
+    for item in value.get("comparisons") or []:
+        if not isinstance(item, dict):
+            continue
+        numerator = _group(item.get("numerator"), available)
+        denominator = _group(item.get("denominator"), available)
+        if not numerator or not denominator or numerator == denominator:
+            continue
+        comparison = {"numerator": numerator, "denominator": denominator}
+        if comparison not in comparisons:
+            comparisons.append(comparison)
     return {
-        "group_a": group_a if group_a != group_b else None,
-        "group_b": group_b if group_a != group_b else None,
+        "comparisons": comparisons,
         "pvalue_cutoff": _number(value.get("pvalue_cutoff"), minimum=0, maximum=1),
         "fold_change_cutoff": _number(value.get("fold_change_cutoff"), minimum=1),
         "reason": str(value.get("reason") or ""),
@@ -92,8 +100,7 @@ def _transcriptomics_arguments(value: dict[str, Any], groups: list[str]) -> dict
 def default_differential_arguments(skill_name: str) -> dict[str, Any]:
     if skill_name == "differential_protein_analysis":
         return {
-            "group_a": None,
-            "group_b": None,
+            "comparisons": [],
             "pvalue_cutoff": None,
             "fold_change_cutoff": None,
             "reason": "使用执行器默认参数。",
@@ -119,8 +126,7 @@ async def resolve_differential_arguments(
     if skill_name == "differential_protein_analysis":
         data_family = "proteomics"
         output_schema: dict[str, Any] = {
-            "group_a": "string|null; denominator/reference group",
-            "group_b": "string|null; numerator/test group",
+            "comparisons": [{"numerator": "string", "denominator": "string"}],
             "pvalue_cutoff": "number|null",
             "fold_change_cutoff": "number|null",
             "reason": "string",

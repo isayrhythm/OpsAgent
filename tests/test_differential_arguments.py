@@ -30,7 +30,8 @@ def ready_profile(data_family: str, groups: dict[str, list[str]]) -> dict[str, o
 
 def test_protein_arguments_use_json_output_and_detected_groups() -> None:
     llm = JsonLLM(
-        '{"group_a":"WT","group_b":"MT","pvalue_cutoff":0.01,"fold_change_cutoff":2,"reason":"user requested"}'
+        '{"comparisons":[{"numerator":"MT","denominator":"WT"}],"pvalue_cutoff":0.01,'
+        '"fold_change_cutoff":2,"reason":"user requested"}'
     )
 
     arguments = asyncio.run(
@@ -43,8 +44,7 @@ def test_protein_arguments_use_json_output_and_detected_groups() -> None:
     )
 
     assert arguments == {
-        "group_a": "WT",
-        "group_b": "MT",
+        "comparisons": [{"numerator": "MT", "denominator": "WT"}],
         "pvalue_cutoff": 0.01,
         "fold_change_cutoff": 2.0,
         "reason": "user requested",

@@ -63,7 +63,7 @@ python -m pdm run web
 
 ## Skill 约定
 
-每个 Skill 是一个 `skill/*.md` 文件，文件头部使用 frontmatter：
+每个 Skill 是一个 `skill/*.md` 文件，文件头部使用 frontmatter。生成代码型 Skill 只需要路由元数据和正文执行说明：
 
 ```markdown
 ---
@@ -77,6 +77,23 @@ data_paths: data/example_gene_expression.csv
 ```
 
 `name`、`description`、`trigger` 等元信息会被装载给路由器。只有路由命中后，后端才读取完整 Skill 文档并生成执行代码。文件正文用于指导 LLM 生成执行代码，代码需要把 JSON 可序列化结果赋值给 `result`。
+
+确定性 Skill 通过 contract 声明 executor、参数解析器和 JSON schema：
+
+```markdown
+---
+name: differential_protein_analysis
+execution_mode: deterministic_python_r
+executor: differential_protein_analysis
+argument_resolver: differential_analysis_json
+input_schema: skill/schemas/differential_protein_analysis.input.json
+output_schema: skill/schemas/differential_protein_analysis.output.json
+---
+```
+
+`deterministic_*` Skill 必须声明已注册的 `executor`，不会隐式回退到代码生成。
+
+运行时统一流程是 `route -> resolve arguments -> validate input -> execute -> validate output -> final answer`。`intake` 是上传文件进入 Skill 路由前的数据修复与 profiling 阶段，产出的标准文件和 `data_profiles` 会作为 Skill 调用上下文。
 
 ## 安全边界
 

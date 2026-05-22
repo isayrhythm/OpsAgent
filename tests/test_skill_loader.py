@@ -47,3 +47,34 @@ Use this body.
 
     assert skill.name == "demo_skill"
     assert "Use this body." in skill.content
+
+
+def test_load_skill_reads_executor_and_json_contracts(tmp_path: Path) -> None:
+    input_schema = tmp_path / "input.json"
+    output_schema = tmp_path / "output.json"
+    input_schema.write_text('{"type":"object","required":["query"]}', encoding="utf-8")
+    output_schema.write_text('{"type":"object","required":["matches"]}', encoding="utf-8")
+    skill_file = tmp_path / "demo.md"
+    skill_file.write_text(
+        f"""---
+name: deterministic_demo
+description: Demo contract
+execution_mode: deterministic_python
+executor: demo_executor
+argument_resolver: message
+input_schema: {input_schema}
+output_schema: {output_schema}
+---
+
+Use this contract.
+""",
+        encoding="utf-8",
+    )
+
+    skill = load_skill(skill_file)
+
+    assert skill.executor == "demo_executor"
+    assert skill.argument_resolver == "message"
+    assert skill.input_schema_path == str(input_schema)
+    assert skill.input_schema == {"type": "object", "required": ["query"]}
+    assert skill.output_schema == {"type": "object", "required": ["matches"]}

@@ -1,0 +1,26 @@
+{
+  "anyOf": [
+    {
+      "type": "object",
+      "required": ["error"]
+    },
+    {
+      "type": "object",
+      "required": ["status", "analysis", "matches", "ui_blocks"],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "analysis": {
+          "type": "string"
+        },
+        "matches": {
+          "type": "array"
+        },
+        "ui_blocks": {
+          "type": "array"
+        }
+      }
+    }
+  ]
+}

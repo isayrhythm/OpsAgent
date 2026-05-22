@@ -1,4 +1,9 @@
-from backend.app.services.differential_protein import _analysis_parameters, _cluster_heatmap_rows, _report_html
+from backend.app.services.differential_protein import (
+    _analysis_parameters,
+    _choose_comparisons,
+    _cluster_heatmap_rows,
+    _report_html,
+)
 
 
 def test_cluster_heatmap_rows_keeps_similar_expression_patterns_adjacent() -> None:
@@ -18,13 +23,37 @@ def test_cluster_heatmap_rows_keeps_similar_expression_patterns_adjacent() -> No
 def test_report_uses_local_plotly_for_interactive_plots() -> None:
     report = _report_html(
         {
-            "group_a": "WT",
-            "group_b": "MT",
+            "MTvsWT": {
+                "summary": {
+                    "slug": "MTvsWT",
+                    "comparison": "MT vs WT",
+                    "total": 4,
+                    "differential": 2,
+                    "up": 1,
+                    "down": 1,
+                },
+                "volcano": [
+                    {"id": "P1", "name": "P1", "x": 1.2, "y": 3.0, "fold_change": 2.3, "pvalue": 0.001, "regulation": "up"}
+                ],
+                "heatmap": {"samples": ["WT1", "MT1"], "rows": [{"id": "P1", "name": "P1", "values": [-1, 1]}]},
+                "rows": [{"feature_id": "P1", "feature_name": "P1", "fold_change": "2.3", "log2_fc": "1.2", "pvalue": "0.001", "padj": "0.01", "regulation": "up"}],
+            }
         },
-        {"total": 4, "differential": 2, "up": 1, "down": 1, "pvalue_cutoff": 0.01, "fold_change_cutoff": 2.0},
-        [{"id": "P1", "name": "P1", "x": 1.2, "y": 3.0, "fold_change": 2.3, "pvalue": 0.001, "regulation": "up"}],
-        {"samples": ["WT1", "MT1"], "rows": [{"id": "P1", "name": "P1", "values": [-1, 1]}]},
-        "<tr><td>P1</td></tr>",
+        [
+            {
+                "slug": "MTvsWT",
+                "comparison": "MT vs WT",
+                "total": 4,
+                "differential": 2,
+                "up": 1,
+                "down": 1,
+                "files": {
+                    "all_results": "run/MTvsWT_all_results.csv",
+                    "differential_results": "run/MTvsWT_differential_results.csv",
+                },
+            }
+        ],
+        {"pvalue_cutoff": 0.01, "fold_change_cutoff": 2.0},
     )
 
     assert '<script src="plotly.min.js"></script>' in report
@@ -33,6 +62,7 @@ def test_report_uses_local_plotly_for_interactive_plots() -> None:
     assert "displayModeBar:false" in report
     assert "Clustered protein axis" in report
     assert "p-value &lt; 0.01" in report
+    assert '<select id="comparison">' in report
     assert 'title:{ text:"log2 fold change", standoff:16 }' in report
     assert 'title:{ text:"-log10 p-value", standoff:16 }' in report
 
@@ -41,3 +71,31 @@ def test_analysis_parameters_accept_explicit_thresholds() -> None:
     parameters = _analysis_parameters({"pvalue_cutoff": 0.01, "fold_change_cutoff": 2})
 
     assert parameters == {"pvalue_cutoff": 0.01, "fold_change_cutoff": 2.0}
+
+
+def test_protein_choose_comparisons_accepts_multiple_requested_pairs() -> None:
+    comparisons = _choose_comparisons(
+        {"WT": ["WT1", "WT2"], "MT1": ["MT11", "MT12"], "MT2": ["MT21", "MT22"]},
+        {
+            "comparisons": [
+                {"numerator": "MT1", "denominator": "WT"},
+                {"numerator": "MT2", "denominator": "WT"},
+            ]
+        },
+    )
+
+    assert [item["comparison"] for item in comparisons] == ["MT1 vs WT", "MT2 vs WT"]
+
+
+def test_protein_choose_comparisons_auto_pairs_named_multi_group_matrix() -> None:
+    comparisons = _choose_comparisons(
+        {
+            "MT-D": ["MT-D1", "MT-D2"],
+            "WT-D": ["WT-D1", "WT-D2"],
+            "MT-C": ["MT-C1", "MT-C2"],
+            "WT-C": ["WT-C1", "WT-C2"],
+        },
+        {},
+    )
+
+    assert [item["comparison"] for item in comparisons] == ["MT-C vs WT-C", "MT-D vs WT-D"]

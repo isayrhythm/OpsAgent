@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["comparisons", "pvalue_cutoff", "fold_change_cutoff", "reason"],
+  "properties": {
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["numerator", "denominator"],
+        "properties": {
+          "numerator": {
+            "type": "string"
+          },
+          "denominator": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pvalue_cutoff": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "fold_change_cutoff": {
+      "type": ["number", "null"],
+      "minimum": 1
+    },
+    "reason": {
+      "type": "string"
+    }
+  }
+}

@@ -32,14 +32,37 @@ def run_differential_protein_analysis(
     attachments: list[UploadedFileSummary],
     arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    intake = _select_ready_intake(attachments, arguments or {})
+    intake = _select_ready_intake(attachments)
     if "error" in intake:
         return intake
+
+    comparisons = _choose_comparisons(intake["groups"], arguments or {})
+    if not comparisons:
+        return {
+            "error": "无法确定蛋白组差异分析比较组，请在问题中明确两个分组。",
+            "detected_groups": intake["groups"],
+            "filename": intake["filename"],
+        }
+    invalid = [
+        comparison
+        for comparison in comparisons
+        if len(intake["groups"][comparison["numerator"]]) < 2
+        or len(intake["groups"][comparison["denominator"]]) < 2
+    ]
+    if invalid:
+        return {
+            "error": "每个蛋白组比较分组至少需要 2 个样本才能进行 t 检验。",
+            "detected_groups": intake["groups"],
+            "comparisons": invalid,
+            "filename": intake["filename"],
+        }
 
     parameters = _analysis_parameters(arguments or {})
     run_id = uuid.uuid4().hex
     output_dir = MEMORY_DIR / "artifacts" / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
+    comparisons_path = output_dir / "comparisons.csv"
+    pd.DataFrame(comparisons).to_csv(comparisons_path, index=False)
 
     rscript = _find_rscript()
     if rscript is None:
@@ -56,9 +79,8 @@ def run_differential_protein_analysis(
         str(R_SCRIPT),
         str(intake["matrix_file"]),
         str(intake["sample_metadata_file"]),
+        str(comparisons_path),
         str(output_dir),
-        intake["group_a"],
-        intake["group_b"],
         str(parameters["pvalue_cutoff"]),
         str(parameters["fold_change_cutoff"]),
     ]
@@ -81,29 +103,23 @@ def run_differential_protein_analysis(
             "source_file": intake["source_file"],
         }
 
-    summary = _summarize_results(output_dir, parameters)
-    report_path = _write_report(output_dir, intake, summary)
+    summaries = _summarize_results(output_dir, comparisons, parameters)
+    report_path = _write_report(output_dir, intake, summaries, parameters)
     return {
         "status": "completed",
         "analysis": "differential_protein_analysis",
         "source_file": intake["source_file"],
         "run_id": run_id,
-        "comparison": f"{intake['group_b']} vs {intake['group_a']}",
-        "groups": {
-            intake["group_a"]: intake["group_a_samples"],
-            intake["group_b"]: intake["group_b_samples"],
-        },
+        "comparison_count": len(summaries),
+        "comparisons": summaries,
+        "groups": intake["groups"],
         "feature_count": intake["feature_count"],
         "sample_count": intake["sample_count"],
         "parameters": parameters,
-        "summary": summary,
         "files": {
             "report_html": str(report_path),
             "report_url": f"/api/artifacts/{run_id}/report.html",
-            "all_results": str(output_dir / "all_results.csv"),
-            "differential_results": str(output_dir / "differential_results.csv"),
-            "up_results": str(output_dir / "up_results.csv"),
-            "down_results": str(output_dir / "down_results.csv"),
+            "comparisons": str(comparisons_path),
             "standard_matrix": str(intake["matrix_file"]),
             "sample_metadata": str(intake["sample_metadata_file"]),
         },
@@ -124,7 +140,7 @@ def artifact_path(run_id: str, filename: str) -> Path:
     return target
 
 
-def _select_ready_intake(attachments: list[UploadedFileSummary], arguments: dict[str, Any]) -> dict[str, Any]:
+def _select_ready_intake(attachments: list[UploadedFileSummary]) -> dict[str, Any]:
     selected: UploadedFileSummary | None = None
     for item in attachments:
         intake = item.intake or {}
@@ -163,43 +179,76 @@ def _select_ready_intake(attachments: list[UploadedFileSummary], arguments: dict
         for group, samples in groups.items()
         if isinstance(samples, list)
     }
-    group_a, group_b = _choose_comparison(groups, arguments)
-    if not group_a or not group_b:
+    if len(groups) < 2:
         return {
-            "error": "无法确定需要比较的两个分组，请在问题中明确写出分组名。",
+            "error": "intake 没有识别到至少两个蛋白组样本分组。",
             "detected_groups": groups,
             "file_id": selected.file_id,
             "filename": selected.filename,
         }
-    if len(groups[group_a]) < 2 or len(groups[group_b]) < 2:
-        return {
-            "error": "每个分组至少需要 2 个样本才能进行 t 检验。",
-            "detected_groups": groups,
-            "selected_groups": [group_a, group_b],
-            "filename": selected.filename,
-        }
     return {
+        "filename": selected.filename,
         "source_file": selected.path or "",
         "matrix_file": str(matrix_file),
         "sample_metadata_file": str(metadata_file),
         "feature_count": int(intake.get("feature_count") or 0),
         "sample_count": int(intake.get("sample_count") or 0),
-        "group_a": group_a,
-        "group_b": group_b,
-        "group_a_samples": groups[group_a],
-        "group_b_samples": groups[group_b],
+        "groups": groups,
     }
 
 
-def _choose_comparison(groups: dict[str, list[str]], arguments: dict[str, Any]) -> tuple[str | None, str | None]:
-    group_a = str(arguments.get("group_a") or "")
-    group_b = str(arguments.get("group_b") or "")
-    if group_a in groups and group_b in groups and group_a != group_b:
-        return group_a, group_b
+def _choose_comparisons(groups: dict[str, list[str]], arguments: dict[str, Any]) -> list[dict[str, str]]:
+    requested = []
+    for item in arguments.get("comparisons") or []:
+        if not isinstance(item, dict):
+            continue
+        numerator = str(item.get("numerator") or "")
+        denominator = str(item.get("denominator") or "")
+        if numerator in groups and denominator in groups and numerator != denominator:
+            comparison = _comparison(numerator, denominator)
+            if comparison not in requested:
+                requested.append(comparison)
+    if requested:
+        return requested
     if len(groups) == 2:
         names = list(groups)
-        return names[0], names[1]
-    return None
+        return [_comparison(names[1], names[0])]
+    return _paired_comparisons(groups)
+
+
+def _paired_comparisons(groups: dict[str, list[str]]) -> list[dict[str, str]]:
+    suffix_groups: dict[str, dict[str, str]] = {}
+    for group in groups:
+        split = re.match(r"^([A-Za-z0-9]+)[_\-. ](.+)$", group)
+        if not split:
+            continue
+        prefix, suffix = split.group(1), split.group(2)
+        suffix_groups.setdefault(suffix.lower(), {})[prefix.upper()] = group
+
+    comparisons: list[dict[str, str]] = []
+    for suffix in sorted(suffix_groups):
+        paired = suffix_groups[suffix]
+        if "MT" in paired and "WT" in paired:
+            comparisons.append(_comparison(paired["MT"], paired["WT"]))
+            continue
+        if len(paired) == 2:
+            numerator, denominator = list(paired.values())
+            comparisons.append(_comparison(numerator, denominator))
+    return comparisons
+
+
+def _comparison(numerator: str, denominator: str) -> dict[str, str]:
+    return {
+        "slug": _slug(f"{numerator}vs{denominator}"),
+        "comparison": f"{numerator} vs {denominator}",
+        "numerator": numerator,
+        "denominator": denominator,
+    }
+
+
+def _slug(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_.-")
+    return cleaned or "comparison"
 
 
 def _analysis_parameters(arguments: dict[str, Any]) -> dict[str, float]:
@@ -236,35 +285,66 @@ def _find_rscript() -> Path | None:
     return None
 
 
-def _summarize_results(output_dir: Path, parameters: dict[str, float]) -> dict[str, Any]:
-    all_results = pd.read_csv(output_dir / "all_results.csv")
-    differential = all_results[all_results["regulation"] != "not_significant"]
-    up = all_results[all_results["regulation"] == "up"]
-    down = all_results[all_results["regulation"] == "down"]
-    return {
-        "total": int(len(all_results)),
-        "differential": int(len(differential)),
-        "up": int(len(up)),
-        "down": int(len(down)),
-        "pvalue_cutoff": parameters["pvalue_cutoff"],
-        "fold_change_cutoff": parameters["fold_change_cutoff"],
-    }
+def _summarize_results(
+    output_dir: Path,
+    comparisons: list[dict[str, str]],
+    parameters: dict[str, float],
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for comparison in comparisons:
+        all_path = output_dir / f"{comparison['slug']}_all_results.csv"
+        all_results = pd.read_csv(all_path)
+        differential = all_results[all_results["regulation"] != "not_significant"]
+        up = all_results[all_results["regulation"] == "up"]
+        down = all_results[all_results["regulation"] == "down"]
+        summaries.append(
+            {
+                **comparison,
+                "total": int(len(all_results)),
+                "differential": int(len(differential)),
+                "up": int(len(up)),
+                "down": int(len(down)),
+                "pvalue_cutoff": parameters["pvalue_cutoff"],
+                "fold_change_cutoff": parameters["fold_change_cutoff"],
+                "files": {
+                    "all_results": str(all_path),
+                    "differential_results": str(output_dir / f"{comparison['slug']}_differential_results.csv"),
+                    "up_results": str(output_dir / f"{comparison['slug']}_up_results.csv"),
+                    "down_results": str(output_dir / f"{comparison['slug']}_down_results.csv"),
+                },
+            }
+        )
+    return summaries
 
 
-def _write_report(output_dir: Path, intake: dict[str, Any], summary: dict[str, Any]) -> Path:
-    all_results = pd.read_csv(output_dir / "all_results.csv")
+def _write_report(
+    output_dir: Path,
+    intake: dict[str, Any],
+    summaries: list[dict[str, Any]],
+    parameters: dict[str, float],
+) -> Path:
     matrix = pd.read_csv(intake["matrix_file"])
-    volcano_points = _volcano_points(all_results)
-    heatmap = _heatmap_payload(matrix, all_results, intake)
-    rows = _table_rows(all_results.head(80))
+    payload: dict[str, Any] = {}
+    for summary in summaries:
+        all_results = pd.read_csv(summary["files"]["all_results"])
+        payload[summary["slug"]] = {
+            "summary": _public_summary(summary),
+            "volcano": _volcano_points(all_results),
+            "heatmap": _heatmap_payload(matrix, all_results, summary, intake["groups"]),
+            "rows": _table_payload(all_results.head(80)),
+        }
     report_path = output_dir / "report.html"
     if PLOTLY_BUNDLE.is_file():
         shutil.copyfile(PLOTLY_BUNDLE, output_dir / "plotly.min.js")
     report_path.write_text(
-        _report_html(intake, summary, volcano_points, heatmap, rows),
+        _report_html(payload, summaries, parameters),
         encoding="utf-8",
     )
     return report_path
+
+
+def _public_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in summary.items() if key != "files"}
 
 
 def _volcano_points(results: pd.DataFrame) -> list[dict[str, Any]]:
@@ -288,13 +368,18 @@ def _volcano_points(results: pd.DataFrame) -> list[dict[str, Any]]:
     return points
 
 
-def _heatmap_payload(matrix: pd.DataFrame, results: pd.DataFrame, intake: dict[str, Any]) -> dict[str, Any]:
+def _heatmap_payload(
+    matrix: pd.DataFrame,
+    results: pd.DataFrame,
+    summary: dict[str, Any],
+    groups: dict[str, list[str]],
+) -> dict[str, Any]:
     selected = results[results["regulation"] != "not_significant"].head(40)
     if selected.empty:
         selected = results.head(40)
     ids = set(selected["feature_id"].astype(str))
     rows = matrix[matrix["feature_id"].astype(str).isin(ids)].head(40)
-    samples = intake["group_a_samples"] + intake["group_b_samples"]
+    samples = groups.get(summary["denominator"], []) + groups.get(summary["numerator"], [])
     payload_rows: list[dict[str, Any]] = []
     values: list[float] = []
     for _, row in rows.iterrows():
@@ -369,12 +454,12 @@ def _vector_distance(left: list[float], right: list[float]) -> float:
     return math.sqrt(sum((left_value - right_value) ** 2 for left_value, right_value in zip(left, right)))
 
 
-def _table_rows(results: pd.DataFrame) -> str:
-    cells: list[str] = []
+def _table_payload(results: pd.DataFrame) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
     columns = ["feature_id", "feature_name", "fold_change", "log2_fc", "pvalue", "padj", "regulation"]
     for row in results[columns].to_dict(orient="records"):
-        cells.append("<tr>" + "".join(f"<td>{html.escape(_format_cell(row.get(column)))}</td>" for column in columns) + "</tr>")
-    return "\n".join(cells)
+        rows.append({column: _format_cell(row.get(column)) for column in columns})
+    return rows
 
 
 def _format_cell(value: Any) -> str:
@@ -395,15 +480,25 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _report_html(
-    intake: dict[str, Any],
-    summary: dict[str, Any],
-    volcano_points: list[dict[str, Any]],
-    heatmap: dict[str, Any],
-    rows: str,
+    payload: dict[str, Any],
+    summaries: list[dict[str, Any]],
+    parameters: dict[str, float],
 ) -> str:
-    volcano_json = json.dumps(volcano_points, ensure_ascii=False)
-    heatmap_json = json.dumps(heatmap, ensure_ascii=False)
-    comparison = html.escape(f"{intake['group_b']} vs {intake['group_a']}")
+    options = "".join(
+        f'<option value="{html.escape(summary["slug"])}">{html.escape(summary["comparison"])}</option>'
+        for summary in summaries
+    )
+    comparison_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(summary['comparison'])}</td>"
+        f"<td>{summary['total']}</td><td>{summary['differential']}</td>"
+        f"<td>{summary['up']}</td><td>{summary['down']}</td>"
+        f'<td><a href="{html.escape(Path(summary["files"]["all_results"]).name)}">all</a> '
+        f'<a href="{html.escape(Path(summary["files"]["differential_results"]).name)}">differential</a></td>'
+        "</tr>"
+        for summary in summaries
+    )
+    payload_json = json.dumps(payload, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -413,7 +508,7 @@ def _report_html(
   <style>
     :root {{ --bg:#f6efe4; --panel:#fffdf8; --ink:#1f1d19; --muted:#73685b; --line:#d9cdbb; --up:#c94132; --down:#2f6fab; --quiet:#8e877d; }}
     body {{ margin:0; background:linear-gradient(135deg,#f4ead8,#eaf2e8); color:var(--ink); font-family:'Avenir Next','Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; }}
-    button,input {{ font:inherit; }}
+    button,input,select {{ font:inherit; }}
     main {{ max-width:1180px; margin:32px auto; padding:0 24px 48px; }}
     .hero {{ border:1px solid var(--line); background:rgba(255,253,248,.86); border-radius:22px; padding:28px; box-shadow:0 18px 50px rgba(55,41,20,.12); }}
     h1 {{ margin:0 0 8px; font-size:34px; }}
@@ -432,7 +527,7 @@ def _report_html(
     .chart-head {{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }}
     .chart-head h2 {{ margin:0; }}
     .chart-tools {{ display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; color:var(--muted); font-size:13px; }}
-    .chart-tools button,.chart-tools input {{ border:1px solid var(--line); border-radius:999px; background:#fffaf1; color:var(--ink); }}
+    .chart-tools button,.chart-tools input,select {{ border:1px solid var(--line); border-radius:999px; background:#fffaf1; color:var(--ink); }}
     .chart-tools button {{ padding:6px 11px; cursor:pointer; }}
     .chart-tools button.active {{ border-color:var(--accent,#165c53); background:#dcebe3; color:#15443b; }}
     .chart-tools input[type="search"] {{ width:150px; padding:7px 12px; }}
@@ -445,21 +540,21 @@ def _report_html(
 <main>
   <div class="hero">
     <h1>Differential Protein Analysis</h1>
-    <div class="muted">Comparison: {comparison}</div>
-    <div class="muted">Thresholds: p-value &lt; {summary['pvalue_cutoff']}; fold change &gt;= {summary['fold_change_cutoff']} or &lt;= {1 / summary['fold_change_cutoff']:.4g}</div>
+    <div class="muted">Thresholds: p-value &lt; {parameters['pvalue_cutoff']}; fold change &gt;= {parameters['fold_change_cutoff']} or &lt;= {1 / parameters['fold_change_cutoff']:.4g}</div>
+    <label>Comparison <select id="comparison">{options}</select></label>
     <div class="cards">
-      <div class="card"><div class="muted">Total proteins</div><div class="value">{summary['total']}</div></div>
-      <div class="card"><div class="muted">Differential</div><div class="value">{summary['differential']}</div></div>
-      <div class="card"><div class="muted">Up</div><div class="value">{summary['up']}</div></div>
-      <div class="card"><div class="muted">Down</div><div class="value">{summary['down']}</div></div>
+      <div class="card"><div class="muted">Total proteins</div><div id="total" class="value"></div></div>
+      <div class="card"><div class="muted">Differential</div><div id="differential" class="value"></div></div>
+      <div class="card"><div class="muted">Up</div><div id="up" class="value"></div></div>
+      <div class="card"><div class="muted">Down</div><div id="down" class="value"></div></div>
     </div>
-    <div class="links">
-      <a href="all_results.csv">all_results.csv</a>
-      <a href="differential_results.csv">differential_results.csv</a>
-      <a href="up_results.csv">up_results.csv</a>
-      <a href="down_results.csv">down_results.csv</a>
-    </div>
+    <div id="links" class="links"></div>
   </div>
+
+  <section>
+    <h2>Comparison Summary</h2>
+    <table><thead><tr><th>Comparison</th><th>Total</th><th>Differential</th><th>Up</th><th>Down</th><th>Results</th></tr></thead><tbody>{comparison_rows}</tbody></table>
+  </section>
 
   <div class="grid">
     <section>
@@ -490,19 +585,42 @@ def _report_html(
     <h2>Top Results</h2>
     <table>
       <thead><tr><th>feature_id</th><th>feature_name</th><th>fold_change</th><th>log2_fc</th><th>pvalue</th><th>padj</th><th>regulation</th></tr></thead>
-      <tbody>{rows}</tbody>
+      <tbody id="topResults"></tbody>
     </table>
   </section>
 </main>
 <script src="plotly.min.js"></script>
 <script>
-const volcano = {volcano_json};
-const heatmap = {heatmap_json};
+const payload = {payload_json};
+let volcano = [];
+let heatmap = {{ samples:[], rows:[] }};
 const plotConfig = {{ responsive:true, displaylogo:false, displayModeBar:false, scrollZoom:true }};
 const plotFont = {{ family:"Avenir Next, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif", color:"#1f1d19" }};
 const plotPaper = {{ paper_bgcolor:"rgba(0,0,0,0)", plot_bgcolor:"#fffaf1", font:plotFont }};
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[char]));
 let volcanoDiffOnly = false;
+function setComparison(slug) {{
+  const item = payload[slug];
+  if (!item) return;
+  volcano = item.volcano;
+  heatmap = item.heatmap;
+  const summary = item.summary;
+  document.getElementById("total").textContent = summary.total;
+  document.getElementById("differential").textContent = summary.differential;
+  document.getElementById("up").textContent = summary.up;
+  document.getElementById("down").textContent = summary.down;
+  document.getElementById("links").innerHTML = [
+    ["all results", `${{summary.slug}}_all_results.csv`],
+    ["differential", `${{summary.slug}}_differential_results.csv`],
+    ["up", `${{summary.slug}}_up_results.csv`],
+    ["down", `${{summary.slug}}_down_results.csv`]
+  ].map(([label, href]) => `<a href="${{esc(href)}}">${{esc(label)}}</a>`).join("");
+  document.getElementById("topResults").innerHTML = item.rows.map(row =>
+    `<tr><td>${{esc(row.feature_id)}}</td><td>${{esc(row.feature_name)}}</td><td>${{esc(row.fold_change)}}</td><td>${{esc(row.log2_fc)}}</td><td>${{esc(row.pvalue)}}</td><td>${{esc(row.padj)}}</td><td>${{esc(row.regulation)}}</td></tr>`
+  ).join("");
+  drawVolcano(true);
+  drawHeatmap();
+}}
 function volcanoTrace(regulation, color, label, points) {{
   return {{
     type:"scattergl",
@@ -585,7 +703,9 @@ document.getElementById("volcanoDiff").onclick = () => {{
   drawVolcano();
 }};
 document.getElementById("volcanoReset").onclick = () => drawVolcano(true);
-drawVolcano(); drawHeatmap();
+const comparison = document.getElementById("comparison");
+comparison.onchange = () => setComparison(comparison.value);
+setComparison(comparison.value);
 document.getElementById("volcano").on("plotly_click", event => {{
   const point = event.points?.[0];
   if (!point) return;

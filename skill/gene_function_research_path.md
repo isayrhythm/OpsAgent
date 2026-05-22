@@ -4,6 +4,10 @@ version: 1
 description: 查询拟南芥基因功能如何被实验逐步建立的研究路径和证据链
 trigger: 用户询问某个拟南芥基因的功能研究路径、功能研究路线、功能证据链、功能是怎么研究出来的、研究步骤、实验路径
 execution_mode: deterministic_python
+executor: gene_function_research_path_query
+argument_resolver: message
+input_schema: skill/schemas/gene_function_research_path.input.json
+output_schema: skill/schemas/gene_function_research_path.output.json
 data_paths: data/final_atha_top30_integrated_output.csv
 ---
 
