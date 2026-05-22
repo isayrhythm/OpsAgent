@@ -68,3 +68,5 @@ def test_transcriptomics_report_uses_local_plotly() -> None:
     assert '<script src="plotly.min.js"></script>' in report
     assert "displayModeBar:false" in report
     assert "DESeq2 thresholds" in report
+    assert 'title:{text:"log2 fold change", standoff:16}' in report
+    assert 'title:{text:"-log10 adjusted p-value", standoff:16}' in report

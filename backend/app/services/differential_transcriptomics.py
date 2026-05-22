@@ -484,9 +484,9 @@ function draw(slug) {{
     trace("down", "Down", "#2f6fab"),
     trace("not_significant", "Not significant", "#9a9084")
   ], {{
-    ...paper, margin:{{l:64,r:18,t:12,b:58}}, hovermode:"closest",
-    xaxis:{{title:"log2 fold change", gridcolor:"#eadfce"}},
-    yaxis:{{title:"-log10 adjusted p-value", gridcolor:"#eadfce"}}
+    ...paper, margin:{{l:92,r:18,t:12,b:78}}, hovermode:"closest",
+    xaxis:{{title:{{text:"log2 fold change", standoff:16}}, automargin:true, gridcolor:"#eadfce"}},
+    yaxis:{{title:{{text:"-log10 adjusted p-value", standoff:16}}, automargin:true, gridcolor:"#eadfce"}}
   }}, config);
   const heatmap = item.heatmap;
   Plotly.react("heatmap", [{{

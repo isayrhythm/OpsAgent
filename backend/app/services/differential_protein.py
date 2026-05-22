@@ -525,13 +525,13 @@ function drawVolcano(resetView = false) {{
   ];
   const layout = {{
     ...plotPaper,
-    margin:{{ l:62, r:18, t:12, b:58 }},
+    margin:{{ l:86, r:18, t:12, b:78 }},
     dragmode:"pan",
     hovermode:"closest",
     showlegend:true,
     legend:{{ orientation:"h", y:1.12 }},
-    xaxis:{{ title:"log2 fold change", zeroline:true, gridcolor:"#eadfce" }},
-    yaxis:{{ title:"-log10 p-value", rangemode:"tozero", gridcolor:"#eadfce" }},
+    xaxis:{{ title:{{ text:"log2 fold change", standoff:16 }}, automargin:true, zeroline:true, gridcolor:"#eadfce" }},
+    yaxis:{{ title:{{ text:"-log10 p-value", standoff:16 }}, automargin:true, rangemode:"tozero", gridcolor:"#eadfce" }},
     uirevision: resetView ? String(Date.now()) : "volcano"
   }};
   Plotly.react("volcano", traces, layout, plotConfig);
