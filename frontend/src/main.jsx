@@ -21,6 +21,8 @@ const ASSISTANT_NAME = "OpsAgent";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MENU_WIDTH = 172;
 const MENU_HEIGHT = 156;
+const UI_DELTA_INITIAL_REVEAL_MS = 120;
+const UI_DELTA_STEP_REVEAL_MS = 460;
 
 const ALLOWED_MARKDOWN_TAGS = new Set([
   "a",
@@ -59,7 +61,7 @@ const ALLOWED_MARKDOWN_ATTRS = {
 
 const suggestions = [
   "解释一下大模型量化模型是什么",
-  "查询水稻 LOC_Os09g03110 的基因表达信息",
+  "cold1基因",
   "我上传了文件，帮我根据文件名和大小判断下一步怎么处理",
   "如果没有涉及专门能力，就先按普通聊天回答我",
 ];
@@ -82,6 +84,7 @@ function normalizeSession(session) {
     createdAt: Number(session.createdAt || Date.now()),
     updatedAt: Number(session.updatedAt || session.createdAt || Date.now()),
     pinnedAt: session.pinnedAt || null,
+    webSearchEnabled: Boolean(session.webSearchEnabled),
     messages: Array.isArray(session.messages)
       ? session.messages.map((message) => ({
           id: message.id || crypto.randomUUID(),
@@ -118,7 +121,7 @@ function sortSessions(items) {
   });
 }
 
-function newSession(title = "新对话") {
+function newSession(title = "新对话", webSearchEnabled = false) {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
@@ -127,6 +130,7 @@ function newSession(title = "新对话") {
     createdAt: now,
     updatedAt: now,
     pinnedAt: null,
+    webSearchEnabled,
     messages: [],
     attachments: [],
     detachedFiles: [],
@@ -425,18 +429,21 @@ function App() {
   const [submitting, setSubmitting] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
   const [uploadStatus, setUploadStatus] = React.useState("");
-  const [webSearchEnabled, setWebSearchEnabled] = React.useState(false);
+  const [draftWebSearchEnabled, setDraftWebSearchEnabled] = React.useState(false);
   const [draggingFiles, setDraggingFiles] = React.useState(false);
   const [userId] = React.useState(loadUserId);
   const messagesRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
   const dragDepthRef = React.useRef(0);
   const sourceCacheRef = React.useRef(new Map());
+  const uiDeltaQueuesRef = React.useRef(new Map());
+  const uiDeltaTimersRef = React.useRef(new Map());
 
   const activeSession = React.useMemo(
     () => sessions.find((session) => session.id === activeSessionId) || null,
     [sessions, activeSessionId],
   );
+  const webSearchEnabled = activeSession ? Boolean(activeSession.webSearchEnabled) : draftWebSearchEnabled;
 
   React.useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 30)));
@@ -457,6 +464,17 @@ function App() {
   React.useEffect(() => {
     checkApi();
   }, []);
+
+  React.useEffect(
+    () => () => {
+      for (const timer of uiDeltaTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      uiDeltaTimersRef.current.clear();
+      uiDeltaQueuesRef.current.clear();
+    },
+    [],
+  );
 
   React.useEffect(() => {
     const node = messagesRef.current;
@@ -505,6 +523,44 @@ function App() {
     );
   }
 
+  function uiDeltaQueueKey(sessionId, messageId) {
+    return `${sessionId}:${messageId}`;
+  }
+
+  function scheduleUiDeltaReveal(key, sessionId, messageId, delay) {
+    if (uiDeltaTimersRef.current.has(key)) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      uiDeltaTimersRef.current.delete(key);
+      const queue = uiDeltaQueuesRef.current.get(key) || [];
+      const payload = queue.shift();
+      if (!payload) {
+        uiDeltaQueuesRef.current.delete(key);
+        return;
+      }
+      updateMessage(sessionId, messageId, (messageItem) => ({
+        ...messageItem,
+        status: messageItem.content ? null : payload.status || messageItem.status,
+        uiBlocks: applyUiDelta(messageItem.uiBlocks, payload.data),
+      }));
+      if (queue.length) {
+        scheduleUiDeltaReveal(key, sessionId, messageId, UI_DELTA_STEP_REVEAL_MS);
+      } else {
+        uiDeltaQueuesRef.current.delete(key);
+      }
+    }, delay);
+    uiDeltaTimersRef.current.set(key, timer);
+  }
+
+  function queueUiDelta(sessionId, messageId, payload) {
+    const key = uiDeltaQueueKey(sessionId, messageId);
+    const queue = uiDeltaQueuesRef.current.get(key) || [];
+    queue.push(payload);
+    uiDeltaQueuesRef.current.set(key, queue);
+    scheduleUiDeltaReveal(key, sessionId, messageId, UI_DELTA_INITIAL_REVEAL_MS);
+  }
+
   async function checkApi() {
     try {
       const response = await fetch(`${normalizedApiBase()}/api/health`);
@@ -518,7 +574,7 @@ function App() {
   }
 
   function createAndActivate(title = "新对话") {
-    const session = newSession(title);
+    const session = newSession(title, draftWebSearchEnabled);
     setActiveSessionId(session.id);
     commitSessions((current) => [session, ...current]);
     return session;
@@ -528,12 +584,24 @@ function App() {
     setActiveSessionId(null);
     setOpenMenuId(null);
     setSidebarOpen(false);
+    setDraftWebSearchEnabled(false);
   }
 
   function handleSelectSession(sessionId) {
     setActiveSessionId(sessionId);
     setOpenMenuId(null);
     setSidebarOpen(false);
+  }
+
+  function handleToggleWebSearch() {
+    if (!activeSession) {
+      setDraftWebSearchEnabled((enabled) => !enabled);
+      return;
+    }
+    patchSession(activeSession.id, (session) => ({
+      ...session,
+      webSearchEnabled: !session.webSearchEnabled,
+    }));
   }
 
   function handleRenameSession(sessionId) {
@@ -716,10 +784,13 @@ function App() {
     }
 
     const session = activeSession || createAndActivate(text);
-    const history = (session.messages || []).slice(-20).map((item) => ({
-      role: item.role === "agent" ? "assistant" : item.role,
-      content: item.content,
-    }));
+    const history = (session.messages || [])
+      .filter((item) => String(item.content || "").trim())
+      .slice(-20)
+      .map((item) => ({
+        role: item.role === "agent" ? "assistant" : item.role,
+        content: item.content,
+      }));
     const usage = normalizeUsage(estimateUsage(text, history), previousUsageTotal(session));
     const userMessage = {id: crypto.randomUUID(), role: "user", content: text, createdAt: Date.now()};
     const assistantMessage = {
@@ -808,11 +879,7 @@ function App() {
 
     source.addEventListener("ui_delta", (event) => {
       const payload = JSON.parse(event.data);
-      updateMessage(sessionId, messageId, (messageItem) => ({
-        ...messageItem,
-        status: messageItem.content ? null : payload.status || messageItem.status,
-        uiBlocks: applyUiDelta(messageItem.uiBlocks, payload.data),
-      }));
+      queueUiDelta(sessionId, messageId, payload);
     });
 
     source.addEventListener("source_delta", (event) => {
@@ -910,7 +977,7 @@ function App() {
           uploading={uploading}
           uploadStatus={uploadStatus}
           webSearchEnabled={webSearchEnabled}
-          onToggleWebSearch={() => setWebSearchEnabled((enabled) => !enabled)}
+          onToggleWebSearch={handleToggleWebSearch}
           attachments={activeSession?.attachments || []}
           onUploadClick={() => fileInputRef.current?.click()}
           onFiles={uploadFiles}
@@ -1327,7 +1394,7 @@ function Composer({
             aria-pressed={webSearchEnabled}
           >
             <SearchIcon />
-            智能搜索
+            网络搜索
           </button>
         </div>
       </form>

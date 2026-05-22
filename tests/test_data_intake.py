@@ -87,3 +87,37 @@ def test_intake_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path
     assert intake["sample_groups"] == {"MT-D": ["MT-D1", "MT-D2"], "WT-D": ["WT-D1", "WT-D2"]}
     assert intake["feature_count"] == 3
     assert "AGIS_Os01g000010" in matrix_text
+
+
+def test_trait_rank_table_stays_low_confidence_without_analysis_skill(tmp_path) -> None:
+    source = tmp_path / "ENSR_soybean_rank.csv"
+    source.write_text(
+        "\n".join(
+            [
+                "feature_id,100seed_weight,affect_auxins_homeostasis,affect_jasmonates_homeostasis,leaf_area,cold_tolerance",
+                "Glyma.01G000100,0.9,0.2,0.3,0.7,0.5",
+                "Glyma.01G000200,0.8,0.4,0.5,0.6,0.3",
+                "Glyma.01G000300,0.7,0.1,0.6,0.5,0.4",
+                "Glyma.01G000400,0.6,0.3,0.7,0.4,0.2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    attachment = UploadedFileSummary(
+        file_id="rank",
+        filename=source.name,
+        content_type="text/csv",
+        size=source.stat().st_size,
+        path=str(source),
+    )
+
+    intake = intake_uploaded_file(attachment)
+
+    assert intake["status"] == "profiled"
+    assert intake["data_type"] == "expression_matrix"
+    assert intake["confidence"] == "low"
+    assert intake["analysis_ready"] is False
+    assert intake["recommended_skills"] == []
+    assert intake["capabilities"] == []
+    assert "standard_files" not in intake
+    assert any("性状" in warning or "复样" in warning for warning in intake["warnings"])

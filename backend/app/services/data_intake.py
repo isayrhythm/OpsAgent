@@ -13,7 +13,7 @@ from backend.app.schemas import UploadedFileSummary
 
 SUPPORTED_TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm"}
 DEFAULT_MAX_INTAKE_ATTEMPTS = 3
-INTAKE_VERSION = 3
+INTAKE_VERSION = 4
 
 
 def ensure_attachment_intakes(attachments: list[UploadedFileSummary]) -> list[UploadedFileSummary]:
@@ -42,12 +42,19 @@ def intake_uploaded_file(
             "status": "skipped",
             "data_family": "unknown",
             "data_type": "unsupported_file",
+            "confidence": "unconfirmed",
+            "analysis_ready": False,
             "reason": "当前 intake 只处理 CSV/TSV/TXT/XLSX 表格。",
+            "warnings": [],
             "capabilities": [],
         }
 
     profile = _profile_file(item, path)
-    if profile["status"] != "profiled" or profile["data_type"] != "expression_matrix":
+    if (
+        profile["status"] != "profiled"
+        or profile["data_type"] != "expression_matrix"
+        or profile.get("confidence") != "high"
+    ):
         return profile
 
     try:
@@ -102,9 +109,11 @@ def intake_uploaded_file(
     return {
         **profile,
         "status": "failed",
+        "analysis_ready": False,
         "reason": f"{max_attempts} 次 intake 后仍未得到可用于 R 分析的标准矩阵。",
         "attempts": attempts,
         "max_attempts": max_attempts,
+        "recommended_skills": [],
         "capabilities": [],
     }
 
@@ -130,7 +139,10 @@ def prompt_profile(item: UploadedFileSummary, intake: dict[str, Any]) -> dict[st
         "status": intake.get("status", "unknown"),
         "data_family": intake.get("data_family", "unknown"),
         "data_type": intake.get("data_type", "unknown_table"),
+        "confidence": intake.get("confidence", "unconfirmed"),
+        "analysis_ready": bool(intake.get("analysis_ready")),
         "reason": intake.get("reason", ""),
+        "warnings": intake.get("warnings", []),
         "columns_preview": intake.get("columns_preview", []),
         "sample_groups": intake.get("sample_groups", {}),
         "feature_count": intake.get("feature_count"),
@@ -232,30 +244,34 @@ def detect_data_type(frame: pd.DataFrame) -> str:
 
 
 def detect_data_family(frame: pd.DataFrame, data_type: str) -> str:
-    columns_text = " ".join(str(column).lower() for column in frame.columns)
-    proteomics_hits = [
-        "protein.names",
-        "protein.group",
-        "protein.ids",
+    normalized_columns = {_normalized_column_name(column) for column in frame.columns}
+    proteomics_columns = {
+        "protein_names",
+        "protein_group",
+        "protein_ids",
         "proteotypic",
         "peptide",
-        "n.sequences",
-        "first.protein.description",
-    ]
-    transcriptomics_hits = [
+        "peptide_id",
+        "n_sequences",
+        "first_protein_description",
+    }
+    transcriptomics_columns = {
         "gene_id",
         "gene_short_name",
         "transcript",
+        "transcript_id",
         "biotype",
         "ensembl",
         "locus",
         "length",
         "tpm",
         "fpkm",
-    ]
-    if any(hit in columns_text for hit in proteomics_hits):
+    }
+    if normalized_columns.intersection(proteomics_columns) or any(
+        column.startswith("protein_") for column in normalized_columns
+    ):
         return "proteomics"
-    if any(hit in columns_text for hit in transcriptomics_hits):
+    if normalized_columns.intersection(transcriptomics_columns):
         return "transcriptomics"
     feature_id_column = _first_matching_column(frame, ("gene_id", "locus", "feature_id", "id"))
     if data_type == "expression_matrix" and feature_id_column and _looks_like_gene_ids(frame[feature_id_column]):
@@ -265,7 +281,9 @@ def detect_data_family(frame: pd.DataFrame, data_type: str) -> str:
     return "unknown"
 
 
-def recommend_skills(data_family: str, data_type: str) -> list[str]:
+def recommend_skills(data_family: str, data_type: str, confidence: str = "unconfirmed") -> list[str]:
+    if confidence != "high":
+        return []
     if data_family == "proteomics" and data_type == "expression_matrix":
         return ["differential_protein_analysis"]
     if data_family == "transcriptomics" and data_type == "expression_matrix":
@@ -274,6 +292,8 @@ def recommend_skills(data_family: str, data_type: str) -> list[str]:
 
 
 def capabilities_for_profile(profile: dict[str, Any]) -> list[str]:
+    if profile.get("confidence") != "high" and not profile.get("analysis_ready"):
+        return []
     if profile.get("data_family") == "proteomics" and profile.get("data_type") == "expression_matrix":
         return ["differential_protein_analysis", "volcano_report", "heatmap_report"]
     if profile.get("data_family") == "transcriptomics" and profile.get("data_type") == "expression_matrix":
@@ -293,6 +313,7 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
         group_text = ", ".join(f"{group}({len(samples)})" for group, samples in groups.items()) or "未识别"
         columns = ", ".join(str(column) for column in (intake.get("columns_preview") or [])[:12]) or "未识别"
         capabilities = ", ".join(intake.get("capabilities") or []) or "待确认"
+        warnings = "；".join(str(warning) for warning in (intake.get("warnings") or [])) or "无"
         standard_files = intake.get("standard_files") or {}
         sections.append(
             "\n".join(
@@ -302,6 +323,8 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
                     f"  文件大小：{item.size} bytes",
                     f"  intake 状态：{intake.get('status', 'not_processed')}",
                     f"  数据识别：{intake.get('data_family', 'unknown')}/{intake.get('data_type', 'unknown_table')}",
+                    f"  识别置信度：{intake.get('confidence', 'unconfirmed')}",
+                    f"  识别警告：{warnings}",
                     f"  标准矩阵规模：features={intake.get('feature_count', 'unknown')}; samples={intake.get('sample_count', 'unknown')}",
                     f"  原始结构预览：{columns}",
                     f"  标准化结构：matrix={standard_files.get('matrix', 'not_ready')}; metadata={standard_files.get('sample_metadata', 'not_ready')}",
@@ -369,6 +392,29 @@ def explain_profile(data_family: str, data_type: str, frame: pd.DataFrame, sampl
     )
 
 
+def profile_confidence(
+    data_family: str,
+    data_type: str,
+    sample_columns: list[str],
+    groups: dict[str, list[str]],
+) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    if data_type != "expression_matrix":
+        return "unconfirmed", warnings
+    if data_family not in {"proteomics", "transcriptomics"}:
+        warnings.append("缺少可确认组学类型的列证据。")
+    replicate_columns = [column for column in sample_columns if _looks_like_replicate_sample(column)]
+    if len(replicate_columns) < 4:
+        warnings.append("数值列命名不像至少四个复样列，可能是性状、评分或统计列。")
+    replicate_groups = infer_sample_groups(replicate_columns)
+    reusable_samples = sum(len(samples) for samples in replicate_groups.values())
+    if len(replicate_groups) < 2 or reusable_samples < 4:
+        warnings.append("未确认至少两个含复样的样本分组。")
+    if len(groups) > len(replicate_groups) and len(replicate_groups) < 2:
+        warnings.append("按列名前缀形成的分组缺少复样证据，不作为分析分组。")
+    return ("high", []) if not warnings else ("low", warnings)
+
+
 def _clean_frame(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
     frame = frame.dropna(axis=0, how="all").dropna(axis=1, how="all")
@@ -387,29 +433,44 @@ def _profile_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
         "status": "unread",
         "data_family": "unknown",
         "data_type": "unknown_table",
+        "confidence": "unconfirmed",
+        "analysis_ready": False,
         "recommended_skills": [],
         "capabilities": [],
+        "warnings": [],
         "reason": "",
     }
     try:
         frame = read_preview_table(path)
         sample_columns = detect_numeric_sample_columns(frame)
+        if len(sample_columns) < 4:
+            sample_columns = detect_numeric_sample_columns(frame, min_numeric_ratio=0.2)
         groups = infer_sample_groups(sample_columns)
         data_type = detect_data_type(frame)
         data_family = detect_data_family(frame, data_type)
-        profile_shape = {"data_family": data_family, "data_type": data_type}
+        confidence, warnings = profile_confidence(data_family, data_type, sample_columns, groups)
+        analysis_ready = confidence == "high" and data_type == "expression_matrix"
+        profile_shape = {
+            "data_family": data_family,
+            "data_type": data_type,
+            "confidence": confidence,
+            "analysis_ready": analysis_ready,
+        }
         profile.update(
             {
                 "status": "profiled",
                 "data_family": data_family,
                 "data_type": data_type,
+                "confidence": confidence,
+                "analysis_ready": analysis_ready,
                 "row_count_preview": int(len(frame)),
                 "column_count": int(len(frame.columns)),
                 "columns_preview": [str(column) for column in frame.columns[:30]],
                 "numeric_sample_columns": sample_columns[:40],
                 "sample_groups": groups,
-                "recommended_skills": recommend_skills(data_family, data_type),
+                "recommended_skills": recommend_skills(data_family, data_type, confidence),
                 "capabilities": capabilities_for_profile(profile_shape),
+                "warnings": warnings,
                 "reason": explain_profile(data_family, data_type, frame, sample_columns),
             }
         )
@@ -477,8 +538,11 @@ def _failed_intake(item: UploadedFileSummary, reason: str) -> dict[str, Any]:
         "status": "failed",
         "data_family": "unknown",
         "data_type": "unknown_table",
+        "confidence": "unconfirmed",
+        "analysis_ready": False,
         "recommended_skills": [],
         "capabilities": [],
+        "warnings": [],
         "reason": reason,
     }
 
@@ -487,6 +551,18 @@ def _numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(
         series.astype(str).str.replace(",", "", regex=False).str.strip(),
         errors="coerce",
+    )
+
+
+def _normalized_column_name(column: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(column).strip().lower()).strip("_")
+
+
+def _looks_like_replicate_sample(sample: str) -> bool:
+    value = str(sample).strip()
+    return bool(
+        re.search(r"(?:^|[_\-. ])(?:rep|sample)?\d+(?:[_\-. ][A-Za-z]+)?$", value, re.I)
+        or re.search(r"[A-Za-z][_\-. ]?[A-Za-z]*\d+(?:[_\-. ][A-Za-z]+)?$", value)
     )
 
 

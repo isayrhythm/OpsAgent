@@ -75,3 +75,27 @@ def test_differential_transcriptomics_rejects_proteomics_profile() -> None:
 
     assert output["mode"] == "deterministic_analysis"
     assert "不能调用转录组差异分析" in output["result"]["error"]
+
+
+def test_differential_protein_rejects_low_confidence_proteomics_profile() -> None:
+    skill = make_skill("differential_protein_analysis", execution_mode="deterministic_python_r")
+
+    output = asyncio.run(
+        execute_skill(
+            "做差异蛋白分析",
+            skill,
+            OfflineLLM(),
+            data_profiles=[
+                {
+                    "status": "profiled",
+                    "data_family": "proteomics",
+                    "data_type": "expression_matrix",
+                    "confidence": "low",
+                    "analysis_ready": False,
+                }
+            ],
+        )
+    )
+
+    assert output["mode"] == "deterministic_analysis"
+    assert "高置信" in output["result"]["error"]

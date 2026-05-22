@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from backend.app.schemas import UploadedFileSummary
 from backend.app.services import agent_graph
 from backend.app.services.router import RouteDecision
 from backend.app.services.skill_loader import SkillSpec
@@ -261,3 +262,55 @@ def test_web_search_without_sources_still_uses_final_answer_prompt(monkeypatch) 
 
     assert llm.calls[0][0]["content"].startswith("根据当前用户提问")
     assert "web_search" in llm.calls[0][1]["content"]
+
+
+def test_attachment_chat_prompt_exposes_intake_warnings_and_action_guard(monkeypatch) -> None:
+    class ChatLLM:
+        available = True
+        settings = SimpleNamespace(answer_model="answer")
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def stream_chat(self, messages, *_args, **_kwargs):
+            self.calls.append(messages)
+            yield "grounded file answer"
+
+    async def route(*_args, **_kwargs):
+        return RouteDecision(skill=None, skills=[], reason="inspect intake summary")
+
+    monkeypatch.setattr(agent_graph, "route_skill", route)
+    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [])
+    attachment = UploadedFileSummary(
+        file_id="rank",
+        filename="rank.csv",
+        content_type="text/csv",
+        size=12,
+        path="rank.csv",
+        intake={
+            "status": "ready",
+            "intake_version": 4,
+            "data_family": "expression",
+            "data_type": "expression_matrix",
+            "confidence": "low",
+            "analysis_ready": False,
+            "warnings": ["可能是性状表。"],
+        },
+    )
+
+    llm = ChatLLM()
+    graph = agent_graph.build_agent_graph(llm, emit)
+    asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "我上传了文件，下一步怎么处理",
+                "history": [],
+                "attachments": [attachment],
+                "detached_files": [],
+            }
+        )
+    )
+
+    assert "不要声称已经读取文件" in llm.calls[0][0]["content"]
+    assert "识别警告" in llm.calls[0][1]["content"]
+    assert "可能是性状表" in llm.calls[0][1]["content"]

@@ -236,17 +236,21 @@ async def execute_skill(
         }
 
     if skill.name == "differential_protein_analysis":
-        profile_families = {
-            str(profile.get("data_family"))
-            for profile in (data_profiles or [])
-            if profile.get("status") in {"profiled", "ready"}
-        }
-        if profile_families and "proteomics" not in profile_families:
+        profiles = data_profiles or []
+        protein_ready = any(
+            profile.get("status") == "ready"
+            and profile.get("analysis_ready") is True
+            and profile.get("confidence") == "high"
+            and profile.get("data_family") == "proteomics"
+            and profile.get("data_type") == "expression_matrix"
+            for profile in profiles
+        )
+        if profiles and not protein_ready:
             return {
                 "mode": "deterministic_analysis",
                 "result": {
-                    "error": "上传文件没有被识别为蛋白组表达矩阵，不能调用蛋白差异分析。",
-                    "data_profiles": data_profiles or [],
+                    "error": "上传文件尚未被高置信识别为可分析的蛋白组表达矩阵，不能调用蛋白差异分析。",
+                    "data_profiles": profiles,
                 },
             }
         result = await asyncio.to_thread(run_differential_protein_analysis, message, attachments or [])
@@ -256,17 +260,21 @@ async def execute_skill(
         }
 
     if skill.name == "differential_transcriptomics_analysis":
-        profile_families = {
-            str(profile.get("data_family"))
-            for profile in (data_profiles or [])
-            if profile.get("status") in {"profiled", "ready"}
-        }
-        if profile_families and "transcriptomics" not in profile_families:
+        profiles = data_profiles or []
+        transcriptomics_ready = any(
+            profile.get("status") == "ready"
+            and profile.get("analysis_ready") is True
+            and profile.get("confidence") == "high"
+            and profile.get("data_family") == "transcriptomics"
+            and profile.get("data_type") == "expression_matrix"
+            for profile in profiles
+        )
+        if profiles and not transcriptomics_ready:
             return {
                 "mode": "deterministic_analysis",
                 "result": {
-                    "error": "上传文件没有被识别为转录组 counts 表达矩阵，不能调用转录组差异分析。",
-                    "data_profiles": data_profiles or [],
+                    "error": "上传文件尚未被高置信识别为可分析的转录组 counts 表达矩阵，不能调用转录组差异分析。",
+                    "data_profiles": profiles,
                 },
             }
         result = await asyncio.to_thread(run_differential_transcriptomics_analysis, message, attachments or [])
