@@ -57,6 +57,7 @@ def run_gene_phenotype_prediction(message: str) -> dict[str, Any]:
             "query": message,
             "top_k": top_k,
             "species_searched": species_scope,
+            "gene_mappings": [],
             "matches": [],
             "not_found": [{"input": term, "reason": "没有在水稻/玉米基因映射中找到对应标准 ID"} for term in terms],
         }
@@ -101,9 +102,31 @@ def run_gene_phenotype_prediction(message: str) -> dict[str, Any]:
         "top_k": top_k,
         "species_searched": species_scope,
         "genes": sorted({match["canonical_id"] for match in matches}),
+        "gene_mappings": _unique_gene_mappings(resolved),
         "matches": matches,
         "not_found": not_found,
     }
+
+
+def _unique_gene_mappings(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    mappings = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in items:
+        key = (item["input"], item["species"], item["canonical_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        mappings.append(
+            {
+                "input": item["input"],
+                "species": item["species"],
+                "species_label": SPECIES_LABELS.get(item["species"], item["species"]),
+                "canonical_id": item["canonical_id"],
+                "query_id": item["query_id"],
+                "matched_by": item["matched_by"],
+            }
+        )
+    return mappings
 
 
 def _extract_top_k(message: str) -> int:

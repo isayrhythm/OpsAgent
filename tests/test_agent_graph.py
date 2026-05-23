@@ -288,6 +288,16 @@ def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypa
                 "top_k": 1,
                 "species_searched": ["rice"],
                 "genes": ["AGIS_Os07g043560"],
+                "gene_mappings": [
+                    {
+                        "input": "LOC_Os07g48050",
+                        "species": "rice",
+                        "species_label": "水稻",
+                        "canonical_id": "AGIS_Os07g043560",
+                        "query_id": "agis_os07g043560",
+                        "matched_by": "gene_trans",
+                    }
+                ],
                 "matches": [
                     {
                         "input": "LOC_Os07g48050",
@@ -336,6 +346,8 @@ def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypa
 
     payload = llm.calls[0][1]["content"]
     assert "rice_blast_resistance" in payload
+    assert "gene_mappings" in payload
+    assert "AGIS_Os07g043560" in payload
     assert "<truncated>" not in payload
 
 

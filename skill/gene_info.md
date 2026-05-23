@@ -71,6 +71,14 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
 result = {
     "query_terms": ["用户请求中识别出的基因词"],
     "species_searched": ["rice", "maize", "soy", "arabidopsis"],
+    "gene_mappings": [
+        {
+            "input": "用户输入的 ID 或别名",
+            "species": "rice",
+            "canonical_id": "AGIS_Os09g012290",
+            "matched_by": "canonical_id 或 alias"
+        }
+    ],
     "matches": [
         {
             "input": "原始查询词",
@@ -90,4 +98,5 @@ result = {
 - 可以用 `re.findall()` 从用户请求中提取候选词。候选词应覆盖包含字母、数字、点、下划线、连字符的 token，例如 `LOC_Os09g03110`、`Zm00001eb000020`、`zm00001d027231`、`Glyma.15G027500`、`GmW82.15G028400`。
 - 过滤掉明显不是基因 ID 的普通词，例如 `gene`、`info`、`query`、`rice`、`maize`、`soybean`、`arabidopsis`。
 - 对每个候选词，每个物种最多返回一个标准 ID 命中结果。
+- 每个命中都必须同时写入顶层 `gene_mappings`，明确记录用户输入的 ID/别名映射到了哪个标准基因 ID，供后续追问继续使用。
 - 如果用户问“这个 ID 对应哪个标准 ID”，即使没有要求完整信息，也应返回 `canonical_id`，可以同时返回 `text`。

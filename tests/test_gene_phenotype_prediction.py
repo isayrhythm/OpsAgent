@@ -26,6 +26,16 @@ def test_gene_phenotype_prediction_uses_mapping_and_top_k(tmp_path, monkeypatch)
     result = predictor.run_gene_phenotype_prediction("预测水稻 LOC_Os07g48050 的表型，前2个")
 
     assert result["matches"][0]["canonical_id"] == "AGIS_Os07g033940"
+    assert result["gene_mappings"] == [
+        {
+            "input": "LOC_Os07g48050",
+            "species": "rice",
+            "species_label": "水稻",
+            "canonical_id": "AGIS_Os07g033940",
+            "query_id": "agis_os07g033940",
+            "matched_by": "gene_trans",
+        }
+    ]
     assert [item["phenotype"] for item in result["matches"][0]["predictions"]] == [
         "plant_height",
         "drought_tolerance",

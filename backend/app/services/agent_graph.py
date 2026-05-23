@@ -308,6 +308,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 for key, item in result.items()
                 if key in {"status", "analysis", "query", "top_k", "species_searched", "genes", "not_found"}
             }
+            answer_result["gene_mappings"] = result.get("gene_mappings", [])
             answer_result["matches"] = [
                 {
                     "input": match.get("input"),

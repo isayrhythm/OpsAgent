@@ -38,6 +38,16 @@ data_paths: data/GenePredictor/maize_lte_result.parquet, data/GenePredictor/rice
   "top_k": 5,
   "species_searched": ["rice"],
   "genes": ["AGIS_Os07g..."],
+  "gene_mappings": [
+    {
+      "input": "LOC_Os07g48050",
+      "species": "rice",
+      "species_label": "水稻",
+      "canonical_id": "AGIS_Os07g...",
+      "query_id": "agis_os07g...",
+      "matched_by": "gene_trans"
+    }
+  ],
   "matches": [
     {
       "input": "LOC_Os07g48050",
