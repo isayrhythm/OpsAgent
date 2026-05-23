@@ -1,8 +1,16 @@
+import subprocess
+from pathlib import Path
+
+import pandas as pd
+
+from backend.app.schemas import UploadedFileSummary
 from backend.app.services.differential_transcriptomics import (
     _analysis_parameters,
     _choose_comparisons,
     _cluster_heatmap_rows,
     _report_html,
+    _sanitize_counts_matrix_for_deseq2,
+    run_differential_transcriptomics_analysis,
 )
 
 
@@ -70,3 +78,99 @@ def test_transcriptomics_report_uses_local_plotly() -> None:
     assert "DESeq2 thresholds" in report
     assert 'title:{text:"log2 fold change", standoff:16}' in report
     assert 'title:{text:"-log10 adjusted p-value", standoff:16}' in report
+
+
+def test_sanitize_counts_matrix_for_deseq2_removes_invalid_rows(tmp_path: Path) -> None:
+    matrix = tmp_path / "standard_matrix.csv"
+    metadata = tmp_path / "sample_metadata.csv"
+    output = tmp_path / "retry_standard_matrix.csv"
+    matrix.write_text(
+        "\n".join(
+            [
+                "feature_id,MT1,MT2,WT1,WT2",
+                "gene_good,10,12,5,6",
+                "gene_bad,NA,11,7,8",
+                "gene_negative,4,-1,5,6",
+                "gene_zero,0,0,0,0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata.write_text("sample,condition\nMT1,MT\nMT2,MT\nWT1,WT\nWT2,WT\n", encoding="utf-8")
+
+    repair = _sanitize_counts_matrix_for_deseq2(matrix, metadata, output)
+    cleaned = pd.read_csv(output)
+
+    assert repair["retryable"] is True
+    assert repair["removed_rows"] == 3
+    assert repair["remaining_rows"] == 1
+    assert cleaned["feature_id"].tolist() == ["gene_good"]
+
+
+def test_transcriptomics_analysis_retries_with_repaired_counts_matrix(tmp_path: Path, monkeypatch) -> None:
+    matrix = tmp_path / "standard_matrix.csv"
+    metadata = tmp_path / "sample_metadata.csv"
+    matrix.write_text(
+        "\n".join(
+            [
+                "feature_id,MT1,MT2,WT1,WT2",
+                "gene_good,10,12,5,6",
+                "gene_bad,bad,11,7,8",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    metadata.write_text("sample,condition\nMT1,MT\nMT2,MT\nWT1,WT\nWT2,WT\n", encoding="utf-8")
+    attachment = UploadedFileSummary(
+        file_id="rna",
+        filename="rna.csv",
+        size=1,
+        path=str(matrix),
+        intake={
+            "status": "ready",
+            "data_family": "transcriptomics",
+            "data_type": "expression_matrix",
+            "feature_count": 2,
+            "sample_count": 4,
+            "sample_groups": {"MT": ["MT1", "MT2"], "WT": ["WT1", "WT2"]},
+            "standard_files": {"matrix": str(matrix), "sample_metadata": str(metadata)},
+        },
+    )
+    calls = {"count": 0}
+
+    def fake_run(command, **_kwargs):
+        calls["count"] += 1
+        output_dir = Path(command[5])
+        if calls["count"] == 1:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="NA values are not allowed in count matrix")
+        comparisons = pd.read_csv(command[4])
+        slug = comparisons["slug"].iloc[0]
+        pd.DataFrame({"gene_id": ["gene_good"], "MT1": [11], "MT2": [12], "WT1": [5], "WT2": [6]}).to_csv(
+            output_dir / "normalized_counts.csv",
+            index=False,
+        )
+        pd.DataFrame(
+            {
+                "gene_id": ["gene_good"],
+                "log2FoldChange": [1.2],
+                "padj": [0.01],
+                "pvalue": [0.005],
+                "regulation": ["up"],
+            }
+        ).to_csv(output_dir / f"{slug}_all_genes.csv", index=False)
+        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("backend.app.services.differential_transcriptomics._find_rscript", lambda: Path("Rscript"))
+    monkeypatch.setattr("backend.app.services.differential_transcriptomics.subprocess.run", fake_run)
+
+    result = run_differential_transcriptomics_analysis(
+        [attachment],
+        {"comparisons": [{"numerator": "MT", "denominator": "WT"}]},
+    )
+
+    assert result["status"] == "completed"
+    assert calls["count"] == 2
+    assert result["retry"]["attempted"] is True
+    assert result["retry"]["second_returncode"] == 0
+    assert result["feature_count"] == 1
+    assert "repaired_standard_matrix" in result["files"]

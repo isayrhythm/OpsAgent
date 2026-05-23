@@ -24,6 +24,7 @@ data_paths: uploaded transcriptomics counts expression matrix
 - 该 skill 不使用 LLM 生成分析代码。
 - 上传阶段的 Python intake 负责识别分隔符、feature/gene ID 列、数值样本列、样本分组，并生成标准矩阵和样本 metadata。
 - R 负责确定性 DESeq2 分析：低 counts 过滤、size factor 归一化、差异表达建模、结果筛选。
+- 如果第一次 DESeq2 执行失败，调用层只允许白名单修复：删除含非数值、缺失、负数或全零 counts 的基因行，将 counts 四舍五入为整数，然后使用同一个 R 脚本重跑一次；不会修改 DESeq2 主脚本或统计口径。
 - 如果 intake 分组可按同一后缀自动配对，例如 `MT-D/WT-D`、`MT-C/WT-C`、`MT-S/WT-S`，默认输出所有配对比较；用户明确指定两个分组时只跑该比较。
 - HTML 报告包含比较组 summary、结果表下载链接、交互式火山图和聚类热图。
 
@@ -64,3 +65,8 @@ significant <- subset(res_df, padj < padj_cutoff & abs(log2FoldChange) >= log2_f
 
 - `normalized_counts.csv`
 - `report.html`
+
+若触发可控重试，会额外产出：
+
+- `retry_standard_matrix.csv`
+- `retry_plan.json`

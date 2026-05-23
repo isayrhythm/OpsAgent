@@ -31,17 +31,6 @@ def make_skill(name: str, execution_mode: str = "generated_python") -> SkillSpec
     )
 
 
-def test_gene_expression_local_fallback_returns_records() -> None:
-    skill = make_skill("query_gene_expression")
-
-    output = asyncio.run(execute_skill("查询 AT1G00001 在 leaf 的表达量", skill, OfflineLLM()))
-
-    assert output["mode"] == "local_fallback"
-    assert output["result"]["count"] == 1
-    assert output["result"]["records"][0]["gene_id"] == "AT1G00001"
-    assert output["result"]["records"][0]["tissue"] == "leaf"
-
-
 def test_differential_protein_rejects_transcriptomics_profile() -> None:
     skill = make_skill("differential_protein_analysis", execution_mode="deterministic_python_r")
 

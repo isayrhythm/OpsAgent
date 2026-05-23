@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,14 @@ PLOTLY_BUNDLE = Path(__file__).resolve().parents[1] / "vendor" / "plotly-3.5.1.m
 R_SCRIPT = Path(__file__).resolve().parents[1] / "r" / "differential_transcriptomics.R"
 DEFAULT_PADJ_CUTOFF = 0.05
 DEFAULT_LOG2_FC_CUTOFF = 1.0
+
+
+@dataclass(frozen=True)
+class RRunResult:
+    completed: subprocess.CompletedProcess[str]
+    command: list[str]
+    stdout_path: Path
+    stderr_path: Path
 
 
 def run_differential_transcriptomics_analysis(
@@ -54,38 +63,50 @@ def run_differential_transcriptomics_analysis(
             "source_file": intake["source_file"],
         }
 
-    command = [
-        str(rscript),
-        str(R_SCRIPT),
-        str(intake["matrix_file"]),
-        str(intake["sample_metadata_file"]),
-        str(comparisons_path),
-        str(output_dir),
-        str(parameters["padj_cutoff"]),
-        str(parameters["log2_fc_cutoff"]),
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=ANALYSIS_TIMEOUT_SECONDS,
-        check=False,
+    command = _r_command(
+        rscript,
+        Path(str(intake["matrix_file"])),
+        Path(str(intake["sample_metadata_file"])),
+        comparisons_path,
+        output_dir,
+        parameters,
     )
-    (output_dir / "r_stdout.txt").write_text(completed.stdout or "", encoding="utf-8")
-    (output_dir / "r_stderr.txt").write_text(completed.stderr or "", encoding="utf-8")
-    if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()
-        error = "R 转录组差异分析执行失败。"
-        if "DESeq2" in stderr:
-            error = "R 环境缺少 DESeq2，无法执行转录组差异分析。"
-        return {
-            "error": error,
-            "returncode": completed.returncode,
-            "stderr": stderr[-4000:],
-            "stdout": (completed.stdout or "").strip()[-2000:],
-            "source_file": intake["source_file"],
-        }
+    first_run = _run_r_command(command, output_dir)
+    if first_run.completed.returncode != 0:
+        retry = _retry_failed_transcriptomics_run(
+            first_run,
+            intake,
+            comparisons_path,
+            output_dir,
+            rscript,
+            parameters,
+        )
+        if retry.get("status") == "retry_succeeded":
+            retry_intake = {**intake, "matrix_file": retry["matrix_file"]}
+            summaries = _summarize_results(output_dir, comparisons, parameters)
+            report_path = _write_report(output_dir, retry_intake, summaries, parameters)
+            return {
+                "status": "completed",
+                "analysis": "differential_transcriptomics_analysis",
+                "source_file": intake["source_file"],
+                "run_id": run_id,
+                "comparison_count": len(summaries),
+                "comparisons": summaries,
+                "groups": intake["groups"],
+                "feature_count": retry["feature_count"],
+                "sample_count": intake["sample_count"],
+                "parameters": parameters,
+                "retry": retry["retry"],
+                "files": {
+                    "report_html": str(report_path),
+                    "report_url": f"/api/artifacts/{run_id}/report.html",
+                    "normalized_counts": str(output_dir / "normalized_counts.csv"),
+                    "comparisons": str(comparisons_path),
+                    "repaired_standard_matrix": retry["matrix_file"],
+                    "retry_plan": str(output_dir / "retry_plan.json"),
+                },
+            }
+        return _r_failure_result(first_run, intake, retry.get("retry"))
 
     summaries = _summarize_results(output_dir, comparisons, parameters)
     report_path = _write_report(output_dir, intake, summaries, parameters)
@@ -106,6 +127,172 @@ def run_differential_transcriptomics_analysis(
             "normalized_counts": str(output_dir / "normalized_counts.csv"),
             "comparisons": str(comparisons_path),
         },
+    }
+
+
+def _r_command(
+    rscript: Path,
+    matrix_file: Path,
+    metadata_file: Path,
+    comparisons_path: Path,
+    output_dir: Path,
+    parameters: dict[str, float],
+) -> list[str]:
+    return [
+        str(rscript),
+        str(R_SCRIPT),
+        str(matrix_file),
+        str(metadata_file),
+        str(comparisons_path),
+        str(output_dir),
+        str(parameters["padj_cutoff"]),
+        str(parameters["log2_fc_cutoff"]),
+    ]
+
+
+def _run_r_command(command: list[str], output_dir: Path, suffix: str = "") -> RRunResult:
+    completed = subprocess.run(
+        command,
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=ANALYSIS_TIMEOUT_SECONDS,
+        check=False,
+    )
+    stdout_path = output_dir / f"r_stdout{suffix}.txt"
+    stderr_path = output_dir / f"r_stderr{suffix}.txt"
+    stdout_path.write_text(completed.stdout or "", encoding="utf-8")
+    stderr_path.write_text(completed.stderr or "", encoding="utf-8")
+    return RRunResult(completed=completed, command=command, stdout_path=stdout_path, stderr_path=stderr_path)
+
+
+def _r_failure_result(run: RRunResult, intake: dict[str, Any], retry: dict[str, Any] | None = None) -> dict[str, Any]:
+    stderr = (run.completed.stderr or "").strip()
+    error = "R 转录组差异分析执行失败。"
+    if _is_missing_deseq2_error(stderr):
+        error = "R 环境缺少 DESeq2，无法执行转录组差异分析。"
+    return {
+        "error": error,
+        "returncode": run.completed.returncode,
+        "stderr": stderr[-4000:],
+        "stdout": (run.completed.stdout or "").strip()[-2000:],
+        "source_file": intake["source_file"],
+        "retry": retry or {"attempted": False, "reason": "没有匹配到可安全自动修复的失败类型。"},
+    }
+
+
+def _retry_failed_transcriptomics_run(
+    first_run: RRunResult,
+    intake: dict[str, Any],
+    comparisons_path: Path,
+    output_dir: Path,
+    rscript: Path,
+    parameters: dict[str, float],
+) -> dict[str, Any]:
+    first_stderr = (first_run.completed.stderr or "").strip()
+    if _is_missing_deseq2_error(first_stderr):
+        return {"status": "not_retryable", "retry": {"attempted": False, "reason": "缺少 DESeq2 属于环境错误，不能通过重跑修复。"}}
+
+    repair = _sanitize_counts_matrix_for_deseq2(
+        Path(str(intake["matrix_file"])),
+        Path(str(intake["sample_metadata_file"])),
+        output_dir / "retry_standard_matrix.csv",
+    )
+    retry_plan = {
+        "attempted": bool(repair["retryable"]),
+        "action": "sanitize_counts_matrix",
+        "reason": "第一次 DESeq2 执行失败，调用层只按白名单规则清理 counts 矩阵后重跑固定 R 脚本。",
+        "first_returncode": first_run.completed.returncode,
+        "first_stderr_tail": first_stderr[-2000:],
+        "repair": repair,
+    }
+    (output_dir / "retry_plan.json").write_text(json.dumps(retry_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not repair["retryable"]:
+        return {"status": "not_retryable", "retry": retry_plan}
+
+    command = _r_command(
+        rscript,
+        Path(str(repair["matrix_file"])),
+        Path(str(intake["sample_metadata_file"])),
+        comparisons_path,
+        output_dir,
+        parameters,
+    )
+    retry_run = _run_r_command(command, output_dir, suffix="_retry")
+    retry_plan["second_returncode"] = retry_run.completed.returncode
+    retry_plan["second_stderr_tail"] = (retry_run.completed.stderr or "").strip()[-2000:]
+    (output_dir / "retry_plan.json").write_text(json.dumps(retry_plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    if retry_run.completed.returncode != 0:
+        return {"status": "retry_failed", "retry": retry_plan}
+    return {
+        "status": "retry_succeeded",
+        "matrix_file": str(repair["matrix_file"]),
+        "feature_count": int(repair["remaining_rows"]),
+        "retry": retry_plan,
+    }
+
+
+def _is_missing_deseq2_error(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return "deseq2 package is required" in lowered or (
+        "there is no package called" in lowered and "deseq2" in lowered
+    )
+
+
+def _sanitize_counts_matrix_for_deseq2(matrix_file: Path, metadata_file: Path, output_path: Path) -> dict[str, Any]:
+    matrix = pd.read_csv(matrix_file)
+    metadata = pd.read_csv(metadata_file)
+    samples = [str(sample) for sample in metadata.get("sample", []) if str(sample) in matrix.columns]
+    if not samples:
+        return {
+            "retryable": False,
+            "reason": "标准矩阵中找不到 sample_metadata 对应的样本列。",
+            "matrix_file": str(output_path),
+            "removed_rows": 0,
+            "remaining_rows": 0,
+            "invalid_cells": 0,
+        }
+
+    repaired = matrix.copy()
+    numeric = repaired[samples].apply(lambda column: pd.to_numeric(column.astype(str).str.replace(",", "", regex=False).str.strip(), errors="coerce"))
+    invalid_cells = int(numeric.isna().sum().sum())
+    negative_cells = int((numeric < 0).sum().sum())
+    numeric = numeric.round()
+    invalid_rows = numeric.isna().any(axis=1) | (numeric < 0).any(axis=1) | (numeric.sum(axis=1) <= 0)
+    cleaned = repaired.loc[~invalid_rows].copy()
+    for sample in samples:
+        cleaned[sample] = numeric.loc[~invalid_rows, sample].astype(int).to_list()
+    removed_rows = int(invalid_rows.sum())
+    if removed_rows == 0:
+        return {
+            "retryable": False,
+            "reason": "未发现可通过清理 counts 行修复的数据问题。",
+            "matrix_file": str(output_path),
+            "removed_rows": 0,
+            "remaining_rows": int(len(cleaned)),
+            "invalid_cells": invalid_cells,
+            "negative_cells": negative_cells,
+        }
+    if cleaned.empty:
+        return {
+            "retryable": False,
+            "reason": "清理非法 counts 后没有剩余基因，不能重跑。",
+            "matrix_file": str(output_path),
+            "removed_rows": removed_rows,
+            "remaining_rows": 0,
+            "invalid_cells": invalid_cells,
+            "negative_cells": negative_cells,
+        }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cleaned.to_csv(output_path, index=False)
+    return {
+        "retryable": True,
+        "reason": "已删除含非数值、缺失、负数或全零 counts 的基因行，并将 counts 四舍五入为整数。",
+        "matrix_file": str(output_path),
+        "removed_rows": removed_rows,
+        "remaining_rows": int(len(cleaned)),
+        "invalid_cells": invalid_cells,
+        "negative_cells": negative_cells,
     }
 
 

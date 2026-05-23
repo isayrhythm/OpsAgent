@@ -149,3 +149,4 @@ data_paths: data/your_data.csv
 - Skill 路由使用当前问句、历史和 `data_profiles` 判断要加载哪些 Skill。
 - 生成代码型 Skill 走文档指令到代码生成执行。
 - 确定性 Skill 走 `resolve arguments -> validate input -> execute -> validate output`，缺少注册 executor 时直接失败。
+- 确定性 Skill 可以实现白名单 retry：只允许 executor 明确定义的输入修复或参数修正后重跑固定内核，不允许运行时改写统计脚本或核心算法。
