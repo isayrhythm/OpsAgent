@@ -5,12 +5,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from backend.app.schemas import UploadedFileSummary
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.differential_arguments import resolve_differential_arguments
 from backend.app.services.differential_protein import run_differential_protein_analysis
 from backend.app.services.differential_transcriptomics import run_differential_transcriptomics_analysis
 from backend.app.services.gene_function_research_path import run_gene_function_research_path_query
+from backend.app.services.gene_phenotype_prediction import run_gene_phenotype_prediction
 from backend.app.services.skill_loader import SkillSpec
 
 
@@ -30,6 +31,7 @@ class SkillInvocation:
 @dataclass(frozen=True)
 class SkillExecutionContext:
     message: str
+    history: list[ChatHistoryMessage]
     attachments: list[UploadedFileSummary]
     data_profiles: list[dict[str, Any]]
     llm: DeepSeekClient
@@ -63,7 +65,7 @@ async def execute_registered_skill(skill: SkillSpec, context: SkillExecutionCont
 
 async def _resolve_invocation(skill: SkillSpec, context: SkillExecutionContext) -> SkillInvocation:
     if skill.argument_resolver == "message":
-        arguments = {"message": context.message}
+        arguments = {"message": _message_with_recent_focus(context)}
     elif skill.argument_resolver == "differential_analysis_json":
         if context.emit is not None:
             await context.emit(
@@ -86,11 +88,44 @@ async def _resolve_invocation(skill: SkillSpec, context: SkillExecutionContext) 
     return SkillInvocation(skill_name=skill.name, arguments=arguments)
 
 
+def _message_with_recent_focus(context: SkillExecutionContext) -> str:
+    focus = _recent_focus(context.history)
+    if not focus["last_user_message"] and not focus["last_assistant_message"]:
+        return context.message
+    return (
+        f"当前用户请求：{context.message}\n"
+        f"上一轮用户请求：{focus['last_user_message']}\n"
+        f"上一轮助手回复：{focus['last_assistant_message']}"
+    )
+
+
+def _recent_focus(history: list[ChatHistoryMessage]) -> dict[str, str]:
+    focus = {"last_user_message": "", "last_assistant_message": ""}
+    for item in reversed(history):
+        content = str(item.content or "").strip()
+        if not content:
+            continue
+        if item.role == "user" and not focus["last_user_message"]:
+            focus["last_user_message"] = content
+        elif item.role in {"assistant", "agent"} and not focus["last_assistant_message"]:
+            focus["last_assistant_message"] = content
+        if focus["last_user_message"] and focus["last_assistant_message"]:
+            break
+    return focus
+
+
 async def _run_gene_function_research_path(
     invocation: SkillInvocation,
     _context: SkillExecutionContext,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(run_gene_function_research_path_query, invocation.arguments["message"])
+
+
+async def _run_gene_phenotype_prediction(
+    invocation: SkillInvocation,
+    _context: SkillExecutionContext,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(run_gene_phenotype_prediction, invocation.arguments["message"])
 
 
 async def _run_differential_protein(
@@ -222,6 +257,11 @@ SKILL_EXECUTORS = {
         name="gene_function_research_path_query",
         mode="deterministic_query",
         run=_run_gene_function_research_path,
+    ),
+    "gene_phenotype_prediction": SkillExecutorBinding(
+        name="gene_phenotype_prediction",
+        mode="deterministic_query",
+        run=_run_gene_phenotype_prediction,
     ),
     "differential_protein_analysis": SkillExecutorBinding(
         name="differential_protein_analysis",

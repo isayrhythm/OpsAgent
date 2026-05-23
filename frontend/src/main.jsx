@@ -437,14 +437,14 @@ function App() {
   const [openMenuId, setOpenMenuId] = React.useState(null);
   const [input, setInput] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
-  const [uploading, setUploading] = React.useState(false);
-  const [uploadStatus, setUploadStatus] = React.useState("");
+  const [uploadState, setUploadState] = React.useState({sessionId: null, status: "", running: false});
   const [draftWebSearchEnabled, setDraftWebSearchEnabled] = React.useState(false);
   const [draggingFiles, setDraggingFiles] = React.useState(false);
   const [userId] = React.useState(loadUserId);
   const messagesRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
   const dragDepthRef = React.useRef(0);
+  const uploadClearTimerRef = React.useRef(null);
   const sourceCacheRef = React.useRef(new Map());
   const taskSourcesRef = React.useRef(new Map());
   const uiDeltaQueuesRef = React.useRef(new Map());
@@ -455,6 +455,8 @@ function App() {
     [sessions, activeSessionId],
   );
   const webSearchEnabled = activeSession ? Boolean(activeSession.webSearchEnabled) : draftWebSearchEnabled;
+  const activeUploadStatus = uploadState.sessionId === activeSessionId ? uploadState.status : "";
+  const activeUploading = uploadState.sessionId === activeSessionId && uploadState.running;
   const activeTaskMessage = [...(activeSession?.messages || [])]
     .reverse()
     .find((message) => message.role === "agent" && message.streaming && message.taskId && message.eventsUrl);
@@ -483,6 +485,9 @@ function App() {
     () => () => {
       for (const timer of uiDeltaTimersRef.current.values()) {
         window.clearTimeout(timer);
+      }
+      if (uploadClearTimerRef.current) {
+        window.clearTimeout(uploadClearTimerRef.current);
       }
       for (const source of taskSourcesRef.current.values()) {
         source.close();
@@ -558,6 +563,26 @@ function App() {
         }),
       ),
     );
+  }
+
+  function setUploadForSession(sessionId, status, running) {
+    if (uploadClearTimerRef.current) {
+      window.clearTimeout(uploadClearTimerRef.current);
+      uploadClearTimerRef.current = null;
+    }
+    setUploadState({sessionId, status, running});
+  }
+
+  function clearUploadForSessionSoon(sessionId) {
+    if (uploadClearTimerRef.current) {
+      window.clearTimeout(uploadClearTimerRef.current);
+    }
+    uploadClearTimerRef.current = window.setTimeout(() => {
+      setUploadState((current) =>
+        current.sessionId === sessionId && !current.running ? {sessionId: null, status: "", running: false} : current,
+      );
+      uploadClearTimerRef.current = null;
+    }, 3000);
   }
 
   function uiDeltaQueueKey(sessionId, messageId) {
@@ -693,8 +718,7 @@ function App() {
       formData.append("files", file);
     }
 
-    setUploading(true);
-    setUploadStatus("正在上传文件");
+    setUploadForSession(session.id, "正在上传文件", true);
     try {
       const response = await fetch(`${normalizedApiBase()}/api/uploads`, {
         method: "POST",
@@ -704,13 +728,13 @@ function App() {
         throw new Error(`HTTP ${response.status}`);
       }
       const payload = await response.json();
-      setUploadStatus("文件已保存，等待 intake");
+      setUploadForSession(session.id, "文件已保存，等待 intake", true);
       await listenToUploadIntake(payload.events_url, session.id);
     } catch (error) {
-      setUploadStatus(`上传失败：${error.message}`);
+      setUploadForSession(session.id, `上传失败：${error.message}`, false);
       setConnection({label: `Upload failed: ${error.message}`, ok: false});
     } finally {
-      setUploading(false);
+      setUploadState((current) => (current.sessionId === session.id ? {...current, running: false} : current));
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -724,7 +748,7 @@ function App() {
 
       source.addEventListener("progress", (event) => {
         const payload = JSON.parse(event.data);
-        setUploadStatus(payload.status || "正在 intake 上传文件");
+        setUploadForSession(sessionId, payload.status || "正在 intake 上传文件", true);
       });
 
       source.addEventListener("result", (event) => {
@@ -737,7 +761,8 @@ function App() {
           detachedFiles: (item.detachedFiles || []).filter((file) => !uploadedNames.has(file.filename)),
         }));
         receivedResult = true;
-        setUploadStatus(payload.status || "上传文件 intake 完成");
+        setUploadForSession(sessionId, payload.status || "上传文件 intake 完成", false);
+        clearUploadForSessionSoon(sessionId);
       });
 
       source.addEventListener("error", (event) => {
@@ -816,7 +841,7 @@ function App() {
 
   async function submitMessage(message) {
     const text = message.trim();
-    if (!text || submitting || uploading) {
+    if (!text || submitting || activeUploading) {
       return;
     }
 
@@ -1055,11 +1080,11 @@ function App() {
           value={input}
           onChange={setInput}
           onSubmit={submitMessage}
-          disabled={submitting || uploading || Boolean(activeTaskMessage)}
+          disabled={submitting || activeUploading || Boolean(activeTaskMessage)}
           canCancel={Boolean(activeTaskMessage)}
           onCancel={cancelTask}
-          uploading={uploading}
-          uploadStatus={uploadStatus}
+          uploading={activeUploading}
+          uploadStatus={activeUploadStatus}
           webSearchEnabled={webSearchEnabled}
           onToggleWebSearch={handleToggleWebSearch}
           attachments={activeSession?.attachments || []}
@@ -1068,7 +1093,7 @@ function App() {
           onRemoveFile={(fileId) => activeSession && removeAttachment(activeSession.id, fileId)}
           fileInputRef={fileInputRef}
         />
-        {draggingFiles ? <FileDropOverlay uploading={uploading} /> : null}
+        {draggingFiles ? <FileDropOverlay uploading={activeUploading} /> : null}
       </main>
     </div>
   );

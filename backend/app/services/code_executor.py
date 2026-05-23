@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable
 
 from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
-from backend.app.schemas import UploadedFileSummary
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.result_evaluator import compact_value
 from backend.app.services.skill_loader import SkillSpec
@@ -23,6 +23,28 @@ MAX_RETRY_FEEDBACK_CHARS = 8000
 
 FORBIDDEN_IMPORTS = {"os", "subprocess", "shutil", "socket", "pathlib"}
 FORBIDDEN_NAMES = {"eval", "exec", "compile", "open", "__import__"}
+
+
+def _message_with_recent_focus(message: str, history: list[ChatHistoryMessage] | list[Any]) -> str:
+    focus = {"last_user_message": "", "last_assistant_message": ""}
+    for item in reversed(history):
+        content = str(getattr(item, "content", "") or "").strip()
+        role = str(getattr(item, "role", "") or "")
+        if not content:
+            continue
+        if role == "user" and not focus["last_user_message"]:
+            focus["last_user_message"] = content
+        elif role in {"assistant", "agent"} and not focus["last_assistant_message"]:
+            focus["last_assistant_message"] = content
+        if focus["last_user_message"] and focus["last_assistant_message"]:
+            break
+    if not focus["last_user_message"] and not focus["last_assistant_message"]:
+        return message
+    return (
+        f"当前用户请求：{message}\n"
+        f"上一轮用户请求：{focus['last_user_message']}\n"
+        f"上一轮助手回复：{focus['last_assistant_message']}"
+    )
 
 
 class SkillCodeExecutionError(RuntimeError):
@@ -223,6 +245,7 @@ async def execute_skill(
     llm: DeepSeekClient,
     emit: Emit | None = None,
     *,
+    history: list[Any] | None = None,
     attachments: list[UploadedFileSummary] | None = None,
     data_profiles: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -231,6 +254,7 @@ async def execute_skill(
             skill,
             SkillExecutionContext(
                 message=message,
+                history=history or [],
                 attachments=attachments or [],
                 data_profiles=data_profiles or [],
                 llm=llm,
@@ -241,13 +265,15 @@ async def execute_skill(
     if skill.execution_mode.startswith("deterministic"):
         raise SkillContractError(f"Deterministic skill requires a registered executor: {skill.name}")
 
+    skill_message = _message_with_recent_focus(message, history or [])
+
     if not llm.available and skill.name == "query_gene_expression":
         return {
             "mode": "local_fallback",
-            "result": _query_gene_expression_locally(message),
+            "result": _query_gene_expression_locally(skill_message),
         }
 
-    code, result = await run_generated_skill_code(message, skill, llm, emit)
+    code, result = await run_generated_skill_code(skill_message, skill, llm, emit)
     return {
         "mode": "generated_code",
         "code": textwrap.shorten(code.replace("\n", " "), width=500, placeholder="..."),

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.schemas import DetachedFileSummary
+from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec
 
@@ -132,3 +132,23 @@ def test_router_includes_detached_files_for_current_attachment_state() -> None:
     request_messages = llm.calls[0][0][0]
     assert "detached_files" in request_messages[1]["content"]
     assert "removed.csv" in request_messages[1]["content"]
+
+
+def test_router_includes_recent_focus_for_short_followup() -> None:
+    skill = make_skill("gene_phenotype_prediction", "phenotype prediction")
+    llm = FakeRouterLLM(
+        '{"skill_names":["gene_phenotype_prediction"],"reason":"short follow-up refers to previous phenotype prediction"}'
+    )
+    history = [
+        ChatHistoryMessage(role="user", content="LOC_Os07g48050 可能跟哪些性状相关？"),
+        ChatHistoryMessage(role="assistant", content="执行器未注册，无法完成预测。"),
+    ]
+
+    decision = asyncio.run(route_skill("?", [skill], llm, history=history))
+
+    assert decision.skill is skill
+    request_messages = llm.calls[0][0][0]
+    payload = request_messages[1]["content"]
+    assert "recent_focus" in payload
+    assert "LOC_Os07g48050" in payload
+    assert "执行器未注册" in payload

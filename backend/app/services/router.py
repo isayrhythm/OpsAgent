@@ -39,6 +39,21 @@ def _dedupe_skills(skills: list[SkillSpec]) -> list[SkillSpec]:
     return result
 
 
+def _recent_focus(history: list[ChatHistoryMessage]) -> dict[str, str]:
+    focus = {"last_user_message": "", "last_assistant_message": ""}
+    for item in reversed(history):
+        content = str(item.content or "").strip()
+        if not content:
+            continue
+        if item.role == "user" and not focus["last_user_message"]:
+            focus["last_user_message"] = content
+        elif item.role in {"assistant", "agent"} and not focus["last_assistant_message"]:
+            focus["last_assistant_message"] = content
+        if focus["last_user_message"] and focus["last_assistant_message"]:
+            break
+    return focus
+
+
 async def route_skill(
     message: str,
     skills: list[SkillSpec],
@@ -74,6 +89,7 @@ async def route_skill(
                 "content": json.dumps(
                     {
                         "current_message": message,
+                        "recent_focus": _recent_focus(history),
                         "history": [
                             {"role": item.role, "content": item.content}
                             for item in history[-8:]

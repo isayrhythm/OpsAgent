@@ -1,10 +1,10 @@
 ---
 name: query_gene_info
 version: 1
-description: 当用户请求查询水稻、玉米或大豆基因的基本信息、表达信息、表达研究、注释、功能、位置、别名对应关系或关联性状文本块时触发
-trigger: 查询基因信息、基因表达信息、基因表达研究、表达信息、表达研究、基因注释、基因功能、基因位置、基因长度、GO注释、KEGG注释、结构域、转录本、关联性状、文献信息、gene info、gene expression info、gene annotation、rice gene、水稻基因、maize gene、玉米基因、soybean gene、大豆基因、ID转换、基因别名转换
+description: 当用户请求查询水稻、玉米、大豆或拟南芥基因的基本信息、表达信息、表达研究、注释、功能、位置、别名对应关系或关联性状文本块时触发
+trigger: 查询基因信息、基因表达信息、基因表达研究、表达信息、表达研究、基因注释、基因功能、基因位置、基因长度、GO注释、KEGG注释、结构域、转录本、关联性状、文献信息、gene info、gene expression info、gene annotation、rice gene、水稻基因、maize gene、玉米基因、soybean gene、大豆基因、Arabidopsis gene、Arabidopsis thaliana、拟南芥基因、拟南芥、TAIR、AT基因、ID转换、基因别名转换
 execution_mode: generated_python
-data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.json, data/gene_info/maize_gene_info.json, data/gene_info/maize_gene_trans.json, data/gene_info/soy_gene_info.json, data/gene_info/soy_gene_trans.json
+data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.json, data/gene_info/maize_gene_info.json, data/gene_info/maize_gene_trans.json, data/gene_info/soy_gene_info.json, data/gene_info/soy_gene_trans.json, data/gene_info/ath_gene_info.json, data/gene_info/ath_gene_trans.json
 ---
 
 # Query Gene Info Skill
@@ -26,7 +26,7 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
 - 不要直接调用内置 `open()`。读取 JSON 时使用 `import json, io`，再使用 `io.open(path, "r", encoding="utf-8")`。
 - 数据目录变量可直接使用执行环境提供的 `DATA_DIR`，例如：`DATA_DIR + "/gene_info/rice_gene_trans.json"`。
 - 如果用户明确说明物种，只读取对应物种的 `*_gene_trans.json` 和必要的 `*_gene_info.json`。
-- 如果用户没有明确说明物种，先在三个物种的 `*_gene_trans.json` 和标准 ID 中查找；只对命中的物种读取对应的 `*_gene_info.json`。
+- 如果用户没有明确说明物种，先在四个物种的 `*_gene_trans.json` 和标准 ID 中查找；只对命中的物种读取对应的 `*_gene_info.json`。
 - 不要为了模糊搜索而全量扫描 `*_gene_info.json` 的文本内容；这些文件很大。只有在已确定标准基因 ID 后才读取对应 info 文件并取值。
 - 对用户输入中的基因 ID 或别名做大小写兼容匹配：`*_gene_trans.json` 的 key 通常是小写，查询别名时先使用 `term.lower()`。
 - 对标准基因 ID 先尝试原样匹配 `*_gene_info.json` 的 key，再尝试用小写映射回原始 key。
@@ -41,6 +41,7 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
 | rice | 水稻、rice、Oryza、Os、LOC_Os、RAP | `AGIS_Os09g012290` | `data/gene_info/rice_gene_trans.json` | `data/gene_info/rice_gene_info.json` |
 | maize | 玉米、maize、corn、Zea、Zm、B73 | `Zm00001eb000020` | `data/gene_info/maize_gene_trans.json` | `data/gene_info/maize_gene_info.json` |
 | soy | 大豆、soy、soybean、Glycine、Glyma、GmW82 | `Glyma.15G027500` | `data/gene_info/soy_gene_trans.json` | `data/gene_info/soy_gene_info.json` |
+| arabidopsis | 拟南芥、Arabidopsis、Arabidopsis thaliana、TAIR、Araport、AT | `AT1G01010` | `data/gene_info/ath_gene_trans.json` | `data/gene_info/ath_gene_info.json` |
 
 ## Data
 
@@ -53,6 +54,7 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
   - `rice_gene_trans.json`: `"loc_os09g03110" -> "AGIS_Os09g012290"`
   - `maize_gene_trans.json`: `"zm00001d027231" -> "Zm00001eb000020"`
   - `soy_gene_trans.json`: `"gmw82.15g028400" -> "Glyma.15G027500"`
+  - `ath_gene_trans.json`: `"hy2" -> "AT3G09150"`
 
 ### `*_gene_info.json`
 
@@ -68,7 +70,7 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
 ```python
 result = {
     "query_terms": ["用户请求中识别出的基因词"],
-    "species_searched": ["rice", "maize", "soy"],
+    "species_searched": ["rice", "maize", "soy", "arabidopsis"],
     "matches": [
         {
             "input": "原始查询词",
@@ -86,6 +88,6 @@ result = {
 ## Implementation Hints
 
 - 可以用 `re.findall()` 从用户请求中提取候选词。候选词应覆盖包含字母、数字、点、下划线、连字符的 token，例如 `LOC_Os09g03110`、`Zm00001eb000020`、`zm00001d027231`、`Glyma.15G027500`、`GmW82.15G028400`。
-- 过滤掉明显不是基因 ID 的普通词，例如 `gene`、`info`、`query`、`rice`、`maize`、`soybean`。
+- 过滤掉明显不是基因 ID 的普通词，例如 `gene`、`info`、`query`、`rice`、`maize`、`soybean`、`arabidopsis`。
 - 对每个候选词，每个物种最多返回一个标准 ID 命中结果。
 - 如果用户问“这个 ID 对应哪个标准 ID”，即使没有要求完整信息，也应返回 `canonical_id`，可以同时返回 `text`。

@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.services.code_executor import execute_skill
+from backend.app.schemas import ChatHistoryMessage
+from backend.app.services.code_executor import _message_with_recent_focus, execute_skill
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.services.skill_runtime import SkillContractError
 
@@ -80,6 +81,20 @@ def test_deterministic_skill_requires_registered_executor() -> None:
 
     with pytest.raises(SkillContractError, match="requires a registered executor"):
         asyncio.run(execute_skill("run deterministic demo", skill, OfflineLLM()))
+
+
+def test_generated_skill_message_context_includes_recent_focus() -> None:
+    message = _message_with_recent_focus(
+        "继续查啊",
+        [
+            ChatHistoryMessage(role="user", content="LOC_Os07g48050 可能跟哪些性状相关？"),
+            ChatHistoryMessage(role="assistant", content="上一轮无法执行预测。"),
+        ],
+    )
+
+    assert "当前用户请求：继续查啊" in message
+    assert "上一轮用户请求：LOC_Os07g48050 可能跟哪些性状相关？" in message
+    assert "上一轮助手回复：上一轮无法执行预测。" in message
 
 
 def test_differential_protein_rejects_low_confidence_proteomics_profile() -> None:

@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
-from backend.app.schemas import UploadedFileSummary
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services import agent_graph
 from backend.app.services.router import RouteDecision
 from backend.app.services.skill_loader import SkillSpec
@@ -262,6 +262,136 @@ def test_web_search_without_sources_still_uses_final_answer_prompt(monkeypatch) 
 
     assert llm.calls[0][0]["content"].startswith("根据当前用户提问")
     assert "web_search" in llm.calls[0][1]["content"]
+
+
+def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypatch) -> None:
+    class CaptureLLM:
+        available = True
+        settings = SimpleNamespace(answer_model="answer")
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def stream_chat(self, messages, *_args, **_kwargs):
+            self.calls.append(messages)
+            yield "phenotype answer"
+
+    skill = make_skill("gene_phenotype_prediction", "deterministic_python")
+    patch_route(monkeypatch, skill)
+
+    async def execute(*_args, **_kwargs):
+        return {
+            "mode": "deterministic_query",
+            "result": {
+                "status": "completed",
+                "analysis": "gene_phenotype_prediction",
+                "top_k": 1,
+                "species_searched": ["rice"],
+                "genes": ["AGIS_Os07g043560"],
+                "matches": [
+                    {
+                        "input": "LOC_Os07g48050",
+                        "species": "rice",
+                        "species_label": "水稻",
+                        "canonical_id": "AGIS_Os07g043560",
+                        "matched_by": "gene_trans",
+                        "top_k": 1,
+                        "predictions": [
+                            {
+                                "rank": 1,
+                                "phenotype": "rice_blast_resistance",
+                                "pred_score": 0.089,
+                            }
+                        ],
+                        "source_file": "large.parquet",
+                    }
+                ],
+                "not_found": [],
+            },
+        }
+
+    async def evaluate(**_kwargs):
+        return {
+            "category": "answer",
+            "answered": True,
+            "reason": "ok",
+            "missing": [],
+        }
+
+    monkeypatch.setattr(agent_graph, "execute_skill", execute)
+    monkeypatch.setattr(agent_graph, "evaluate_skill_result", evaluate)
+
+    llm = CaptureLLM()
+    graph = agent_graph.build_agent_graph(llm, emit)
+    asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "LOC_Os07g48050 可能跟哪些性状相关？",
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+            }
+        )
+    )
+
+    payload = llm.calls[0][1]["content"]
+    assert "rice_blast_resistance" in payload
+    assert "<truncated>" not in payload
+
+
+def test_registered_skill_receives_recent_history(monkeypatch) -> None:
+    skill = make_skill("gene_phenotype_prediction", "deterministic_python")
+    skill = SkillSpec(
+        name=skill.name,
+        description=skill.description,
+        version=skill.version,
+        trigger=skill.trigger,
+        execution_mode=skill.execution_mode,
+        data_paths=skill.data_paths,
+        path=skill.path,
+        content=skill.content,
+        executor="gene_phenotype_prediction",
+        argument_resolver="message",
+    )
+    patch_route(monkeypatch, skill)
+    captured = {}
+
+    async def execute(message, selected_skill, llm, emit=None, **kwargs):
+        captured["history"] = kwargs.get("history")
+        return {
+            "mode": "deterministic_query",
+            "result": {
+                "status": "completed",
+                "analysis": "gene_phenotype_prediction",
+                "matches": [],
+                "not_found": [],
+            },
+        }
+
+    async def evaluate(**_kwargs):
+        return {
+            "category": "answer",
+            "answered": True,
+            "reason": "ok",
+            "missing": [],
+        }
+
+    monkeypatch.setattr(agent_graph, "execute_skill", execute)
+    monkeypatch.setattr(agent_graph, "evaluate_skill_result", evaluate)
+
+    graph = agent_graph.build_agent_graph(StreamingAnswerLLM(), emit)
+    asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "继续查啊",
+                "history": [ChatHistoryMessage(role="user", content="LOC_Os07g48050 可能跟哪些性状相关？")],
+                "attachments": [],
+                "detached_files": [],
+            }
+        )
+    )
+
+    assert captured["history"][0].content == "LOC_Os07g48050 可能跟哪些性状相关？"
 
 
 def test_attachment_chat_prompt_exposes_intake_warnings_and_action_guard(monkeypatch) -> None:

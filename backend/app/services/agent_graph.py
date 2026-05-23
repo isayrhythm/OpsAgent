@@ -135,6 +135,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 skill,
                 llm,
                 emit,
+                history=state.get("history", []),
                 attachments=state.get("attachments", []),
                 data_profiles=state.get("data_profiles", []),
             )
@@ -301,6 +302,34 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         if not isinstance(value, dict):
             return compact_value(value)
         result = value.get("result")
+        if isinstance(result, dict) and result.get("analysis") == "gene_phenotype_prediction":
+            answer_result = {
+                key: item
+                for key, item in result.items()
+                if key in {"status", "analysis", "query", "top_k", "species_searched", "genes", "not_found"}
+            }
+            answer_result["matches"] = [
+                {
+                    "input": match.get("input"),
+                    "species": match.get("species"),
+                    "species_label": match.get("species_label"),
+                    "canonical_id": match.get("canonical_id"),
+                    "matched_by": match.get("matched_by"),
+                    "top_k": match.get("top_k"),
+                    "predictions": [
+                        {
+                            "rank": item.get("rank"),
+                            "phenotype": item.get("phenotype"),
+                            "pred_score": item.get("pred_score"),
+                        }
+                        for item in match.get("predictions", [])
+                        if isinstance(item, dict)
+                    ],
+                }
+                for match in result.get("matches", [])
+                if isinstance(match, dict)
+            ]
+            return {**value, "result": answer_result}
         if not isinstance(result, dict) or not result.get("ui_blocks"):
             return compact_value(value)
         answer_result = {key: item for key, item in result.items() if key not in {"matches", "ui_blocks"}}
