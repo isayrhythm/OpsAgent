@@ -589,6 +589,223 @@ button {
   }
 }
 
+.gene-predictor-thinking {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-width: min(430px, 72vw);
+  border: 1px solid rgba(31, 93, 80, 0.16);
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(141, 181, 157, 0.35), transparent 34%),
+    linear-gradient(135deg, rgba(255, 253, 248, 0.96), rgba(226, 240, 231, 0.82));
+  box-shadow: 0 18px 40px rgba(58, 76, 63, 0.12);
+  padding: 12px 16px 12px 12px;
+  color: #123a33;
+}
+
+.gene-predictor-orbit {
+  position: relative;
+  width: 108px;
+  height: 78px;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(31, 93, 80, 0.12), transparent 42%),
+    linear-gradient(160deg, rgba(255, 250, 241, 0.82), rgba(190, 218, 203, 0.55));
+  overflow: hidden;
+}
+
+.gene-predictor-orbit::before {
+  position: absolute;
+  inset: 10px 16px;
+  border: 1px dashed rgba(31, 93, 80, 0.25);
+  border-radius: 999px;
+  content: "";
+  animation: gene-orbit-spin 5.6s linear infinite;
+}
+
+.gene-node,
+.trait-node {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(31, 93, 80, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.96);
+  box-shadow: 0 8px 20px rgba(31, 93, 80, 0.16);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.gene-node {
+  left: 35px;
+  top: 24px;
+  width: 40px;
+  height: 30px;
+  background: #154f43;
+  color: #fff9ec;
+  animation: gene-node-pulse 1.4s ease-in-out infinite;
+}
+
+.trait-node {
+  width: 34px;
+  height: 24px;
+  color: #5a4a2c;
+}
+
+.trait-a {
+  left: 7px;
+  top: 10px;
+}
+
+.trait-b {
+  right: 5px;
+  top: 11px;
+}
+
+.trait-c {
+  left: 37px;
+  bottom: 5px;
+  width: 52px;
+}
+
+.edge {
+  position: absolute;
+  z-index: 1;
+  left: 52px;
+  top: 38px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(31, 93, 80, 0.1), rgba(31, 93, 80, 0.5));
+  transform-origin: 0 50%;
+}
+
+.edge-a {
+  width: 42px;
+  transform: rotate(202deg);
+}
+
+.edge-b {
+  width: 42px;
+  transform: rotate(-25deg);
+}
+
+.edge-c {
+  width: 31px;
+  transform: rotate(85deg);
+}
+
+.signal {
+  position: absolute;
+  z-index: 3;
+  left: 53px;
+  top: 38px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #d69a35;
+  box-shadow: 0 0 12px rgba(214, 154, 53, 0.9);
+}
+
+.signal-a {
+  animation: signal-a 1.5s ease-in-out infinite;
+}
+
+.signal-b {
+  animation: signal-b 1.5s ease-in-out 0.18s infinite;
+}
+
+.signal-c {
+  animation: signal-c 1.5s ease-in-out 0.34s infinite;
+}
+
+.gene-predictor-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.gene-predictor-copy strong {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.gene-predictor-copy span {
+  color: #6d756c;
+  font-size: 12px;
+}
+
+@keyframes gene-orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes gene-node-pulse {
+  50% {
+    box-shadow: 0 0 0 7px rgba(31, 93, 80, 0.12), 0 10px 22px rgba(31, 93, 80, 0.22);
+    transform: scale(1.04);
+  }
+}
+
+@keyframes signal-a {
+  0%,
+  18% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(-33px, -22px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-37px, -25px);
+  }
+}
+
+@keyframes signal-b {
+  0%,
+  18% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(32px, -19px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(36px, -23px);
+  }
+}
+
+@keyframes signal-c {
+  0%,
+  18% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(10px, 27px);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(12px, 31px);
+  }
+}
+
+@media (max-width: 620px) {
+  .gene-predictor-thinking {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+}
+
 .markdown-body {
   line-height: 1.75;
 }

@@ -1412,9 +1412,35 @@ function ResearchStepField({label, value}) {
 }
 
 function ThinkingPill({text}) {
+  if (String(text || "").includes("gene_phenotype_prediction")) {
+    return <GenePredictorThinking retry={String(text || "").includes("重新")} />;
+  }
   return (
     <div className="thinking-pill">
       <span>{text}</span>
+    </div>
+  );
+}
+
+function GenePredictorThinking({retry = false}) {
+  return (
+    <div className="gene-predictor-thinking" aria-label="正在运行图神经网络表型预测">
+      <div className="gene-predictor-orbit" aria-hidden="true">
+        <span className="gene-node">Gene</span>
+        <span className="trait-node trait-a">Trait</span>
+        <span className="trait-node trait-b">Score</span>
+        <span className="trait-node trait-c">Phenotype</span>
+        <i className="edge edge-a" />
+        <i className="edge edge-b" />
+        <i className="edge edge-c" />
+        <i className="signal signal-a" />
+        <i className="signal signal-b" />
+        <i className="signal signal-c" />
+      </div>
+      <div className="gene-predictor-copy">
+        <strong>{retry ? "重新运行 GenePredictor" : "正在运行 GenePredictor"}</strong>
+        <span>图神经网络表型预测 · message passing</span>
+      </div>
     </div>
   );
 }
