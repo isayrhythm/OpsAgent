@@ -1422,24 +1422,45 @@ function ThinkingPill({text}) {
   );
 }
 
-function GenePredictorThinking({retry = false}) {
+function GenePredictorThinking() {
   return (
     <div className="gene-predictor-thinking" aria-label="正在运行图神经网络表型预测">
-      <div className="gene-predictor-orbit" aria-hidden="true">
-        <span className="gene-node">Gene</span>
-        <span className="trait-node trait-a">Trait</span>
-        <span className="trait-node trait-b">Score</span>
-        <span className="trait-node trait-c">Phenotype</span>
-        <i className="edge edge-a" />
-        <i className="edge edge-b" />
-        <i className="edge edge-c" />
-        <i className="signal signal-a" />
-        <i className="signal signal-b" />
-        <i className="signal signal-c" />
-      </div>
-      <div className="gene-predictor-copy">
-        <strong>{retry ? "重新运行 GenePredictor" : "正在运行 GenePredictor"}</strong>
-        <span>图神经网络表型预测 · message passing</span>
+      <div className="gene-predictor-graph" aria-hidden="true">
+        <svg className="gene-predictor-svg" viewBox="0 0 260 150" role="img">
+          <g className="graph-edges">
+            <line x1="55" y1="76" x2="122" y2="32" />
+            <line x1="55" y1="76" x2="98" y2="122" />
+            <line x1="122" y1="32" x2="198" y2="28" />
+            <line x1="122" y1="32" x2="154" y2="78" />
+            <line x1="154" y1="78" x2="198" y2="28" />
+            <line x1="154" y1="78" x2="210" y2="82" />
+            <line x1="154" y1="78" x2="190" y2="124" />
+            <line x1="98" y1="122" x2="154" y2="78" />
+            <line x1="98" y1="122" x2="190" y2="124" />
+            <line x1="198" y1="28" x2="210" y2="82" />
+            <line x1="210" y1="82" x2="190" y2="124" />
+          </g>
+          <g className="graph-flow-edges">
+            <line className="flow-edge flow-edge-a" x1="55" y1="76" x2="190" y2="124" />
+            <line className="flow-edge flow-edge-b" x1="55" y1="76" x2="198" y2="28" />
+            <line className="flow-edge flow-edge-c" x1="98" y1="122" x2="210" y2="82" />
+          </g>
+          <g className="graph-nodes">
+            <circle className="graph-node node-gene" cx="55" cy="76" r="14" />
+            <circle className="graph-node node-a" cx="122" cy="32" r="10" />
+            <circle className="graph-node node-b" cx="198" cy="28" r="13" />
+            <circle className="graph-node node-c" cx="210" cy="82" r="13" />
+            <circle className="graph-node node-d" cx="190" cy="124" r="13" />
+            <circle className="graph-node node-e" cx="98" cy="122" r="12" />
+            <circle className="graph-node node-f" cx="154" cy="78" r="13" />
+            <circle className="graph-node node-g" cx="178" cy="62" r="10" />
+          </g>
+          <g className="graph-particles">
+            <circle className="flow-particle particle-a" r="4" />
+            <circle className="flow-particle particle-b" r="4" />
+            <circle className="flow-particle particle-c" r="4" />
+          </g>
+        </svg>
       </div>
     </div>
   );

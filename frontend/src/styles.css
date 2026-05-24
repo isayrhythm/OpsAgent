@@ -590,219 +590,175 @@ button {
 }
 
 .gene-predictor-thinking {
-  display: grid;
-  grid-template-columns: 118px minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-  min-width: min(430px, 72vw);
-  border: 1px solid rgba(31, 93, 80, 0.16);
-  border-radius: 26px;
-  background:
-    radial-gradient(circle at 22% 18%, rgba(141, 181, 157, 0.35), transparent 34%),
-    linear-gradient(135deg, rgba(255, 253, 248, 0.96), rgba(226, 240, 231, 0.82));
-  box-shadow: 0 18px 40px rgba(58, 76, 63, 0.12);
-  padding: 12px 16px 12px 12px;
-  color: #123a33;
+  width: 280px;
+  max-width: 72vw;
+  padding: 0;
 }
 
-.gene-predictor-orbit {
+.gene-predictor-graph {
   position: relative;
-  width: 108px;
-  height: 78px;
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at 50% 48%, rgba(31, 93, 80, 0.12), transparent 42%),
-    linear-gradient(160deg, rgba(255, 250, 241, 0.82), rgba(190, 218, 203, 0.55));
-  overflow: hidden;
+  width: 270px;
+  height: 156px;
+  overflow: visible;
 }
 
-.gene-predictor-orbit::before {
-  position: absolute;
-  inset: 10px 16px;
-  border: 1px dashed rgba(31, 93, 80, 0.25);
-  border-radius: 999px;
-  content: "";
-  animation: gene-orbit-spin 5.6s linear infinite;
+.gene-predictor-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
-.gene-node,
-.trait-node {
-  position: absolute;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(31, 93, 80, 0.18);
-  border-radius: 999px;
-  background: rgba(255, 253, 248, 0.96);
-  box-shadow: 0 8px 20px rgba(31, 93, 80, 0.16);
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: -0.02em;
+.graph-edges line {
+  stroke: rgba(70, 72, 78, 0.72);
+  stroke-linecap: round;
+  stroke-width: 2.1;
 }
 
-.gene-node {
-  left: 35px;
-  top: 24px;
-  width: 40px;
-  height: 30px;
-  background: #154f43;
-  color: #fff9ec;
-  animation: gene-node-pulse 1.4s ease-in-out infinite;
+.flow-edge {
+  stroke: #d4372f;
+  stroke-dasharray: 9 8;
+  stroke-linecap: round;
+  stroke-width: 3;
+  opacity: 0.88;
+  animation: graph-dash 1.2s linear infinite;
 }
 
-.trait-node {
-  width: 34px;
-  height: 24px;
-  color: #5a4a2c;
+.flow-edge-b {
+  animation-delay: 0.18s;
 }
 
-.trait-a {
-  left: 7px;
-  top: 10px;
+.flow-edge-c {
+  animation-delay: 0.36s;
 }
 
-.trait-b {
-  right: 5px;
-  top: 11px;
+.graph-node {
+  stroke: rgba(84, 77, 88, 0.78);
+  stroke-width: 1.6;
+  filter: drop-shadow(0 7px 11px rgba(48, 47, 50, 0.15));
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: graph-node-pulse 2.2s ease-in-out infinite;
 }
 
-.trait-c {
-  left: 37px;
-  bottom: 5px;
-  width: 52px;
+.node-gene {
+  fill: #c5bfd1;
+  animation-duration: 1.45s;
 }
 
-.edge {
-  position: absolute;
-  z-index: 1;
-  left: 52px;
-  top: 38px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(31, 93, 80, 0.1), rgba(31, 93, 80, 0.5));
-  transform-origin: 0 50%;
+.node-a,
+.node-g {
+  fill: #d9c7df;
 }
 
-.edge-a {
-  width: 42px;
-  transform: rotate(202deg);
+.node-b {
+  fill: #a8d4ec;
+  animation-delay: 0.15s;
 }
 
-.edge-b {
-  width: 42px;
-  transform: rotate(-25deg);
+.node-c {
+  fill: #c8c1dc;
+  animation-delay: 0.3s;
 }
 
-.edge-c {
-  width: 31px;
-  transform: rotate(85deg);
+.node-d {
+  fill: #eba0a0;
+  animation-delay: 0.45s;
 }
 
-.signal {
-  position: absolute;
-  z-index: 3;
-  left: 53px;
-  top: 38px;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #d69a35;
-  box-shadow: 0 0 12px rgba(214, 154, 53, 0.9);
+.node-e {
+  fill: #f0e58f;
+  animation-delay: 0.6s;
 }
 
-.signal-a {
-  animation: signal-a 1.5s ease-in-out infinite;
+.node-f {
+  fill: #b8d8ee;
+  animation-delay: 0.75s;
 }
 
-.signal-b {
-  animation: signal-b 1.5s ease-in-out 0.18s infinite;
+.flow-particle {
+  fill: #fff2b8;
+  filter: drop-shadow(0 0 6px rgba(212, 55, 47, 0.86));
+  opacity: 0;
 }
 
-.signal-c {
-  animation: signal-c 1.5s ease-in-out 0.34s infinite;
+.particle-a {
+  animation: particle-a 1.55s ease-in-out infinite;
 }
 
-.gene-predictor-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
+.particle-b {
+  animation: particle-b 1.55s ease-in-out 0.28s infinite;
 }
 
-.gene-predictor-copy strong {
-  font-size: 13px;
-  letter-spacing: -0.01em;
+.particle-c {
+  animation: particle-c 1.55s ease-in-out 0.54s infinite;
 }
 
-.gene-predictor-copy span {
-  color: #6d756c;
-  font-size: 12px;
-}
-
-@keyframes gene-orbit-spin {
+@keyframes graph-dash {
   to {
-    transform: rotate(360deg);
+    stroke-dashoffset: -34;
   }
 }
 
-@keyframes gene-node-pulse {
+@keyframes graph-node-pulse {
   50% {
-    box-shadow: 0 0 0 7px rgba(31, 93, 80, 0.12), 0 10px 22px rgba(31, 93, 80, 0.22);
-    transform: scale(1.04);
+    transform: scale(1.08);
   }
 }
 
-@keyframes signal-a {
+@keyframes particle-a {
   0%,
-  18% {
+  15% {
     opacity: 0;
-    transform: translate(0, 0);
+    transform: translate(55px, 76px);
   }
-  70% {
+  50% {
     opacity: 1;
-    transform: translate(-33px, -22px);
   }
   100% {
     opacity: 0;
-    transform: translate(-37px, -25px);
+    transform: translate(190px, 124px);
   }
 }
 
-@keyframes signal-b {
+@keyframes particle-b {
   0%,
-  18% {
+  15% {
     opacity: 0;
-    transform: translate(0, 0);
+    transform: translate(55px, 76px);
   }
-  70% {
+  50% {
     opacity: 1;
-    transform: translate(32px, -19px);
   }
   100% {
     opacity: 0;
-    transform: translate(36px, -23px);
+    transform: translate(198px, 28px);
   }
 }
 
-@keyframes signal-c {
+@keyframes particle-c {
   0%,
-  18% {
+  15% {
     opacity: 0;
-    transform: translate(0, 0);
+    transform: translate(98px, 122px);
   }
-  70% {
+  50% {
     opacity: 1;
-    transform: translate(10px, 27px);
   }
   100% {
     opacity: 0;
-    transform: translate(12px, 31px);
+    transform: translate(210px, 82px);
   }
 }
 
 @media (max-width: 620px) {
   .gene-predictor-thinking {
-    grid-template-columns: 1fr;
-    min-width: 0;
+    width: 230px;
+  }
+
+  .gene-predictor-graph {
+    transform: scale(0.84);
+    transform-origin: left center;
   }
 }
 
