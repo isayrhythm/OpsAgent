@@ -9,9 +9,9 @@ from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 
 
-MAX_STRING_LENGTH = 600
-MAX_LIST_ITEMS = 5
-MAX_DICT_ITEMS = 12
+MAX_STRING_LENGTH = 10000
+MAX_LIST_ITEMS = 30
+MAX_DICT_ITEMS = 24
 MAX_EVALUATOR_INPUT_CHARS = 20000
 
 
@@ -27,8 +27,6 @@ def _json_from_text(text: str) -> dict[str, object]:
 
 
 def compact_value(value: Any, depth: int = 0) -> Any:
-    if depth > 4:
-        return "<truncated>"
     if isinstance(value, str):
         if len(value) <= MAX_STRING_LENGTH:
             return value

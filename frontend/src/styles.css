@@ -545,6 +545,15 @@ button {
   font-size: 12px;
 }
 
+.message-meta.user-meta {
+  align-self: flex-end;
+  justify-content: flex-end;
+  width: fit-content;
+  margin-left: auto;
+  padding-left: 0;
+  padding-right: 4px;
+}
+
 .copy-button {
   border: 0;
   border-radius: 999px;
@@ -1004,6 +1013,12 @@ button {
   border-radius: 7px;
   background: rgba(31, 93, 80, 0.1);
   padding: 2px 5px;
+}
+
+.markdown-body sup {
+  font-size: 0.72em;
+  line-height: 0;
+  vertical-align: super;
 }
 
 .markdown-body pre code {
