@@ -1,8 +1,8 @@
 ---
 name: query_gene_info
 version: 1
-description: 当用户请求查询水稻、玉米、大豆或拟南芥基因的基本信息、表达信息、表达研究、注释、功能、位置、别名对应关系或关联性状文本块时触发
-trigger: 查询基因信息、基因表达信息、基因表达研究、表达信息、表达研究、基因注释、基因功能、基因位置、基因长度、GO注释、KEGG注释、结构域、转录本、关联性状、文献信息、gene info、gene expression info、gene annotation、rice gene、水稻基因、maize gene、玉米基因、soybean gene、大豆基因、Arabidopsis gene、Arabidopsis thaliana、拟南芥基因、拟南芥、TAIR、AT基因、ID转换、基因别名转换
+description: 当用户请求查询水稻、玉米、大豆或拟南芥基因的基本信息、表达信息、表达研究、注释、功能、位置、别名对应关系或关联性状文本块时触发；如果用户询问突变体、突变体种子、T-DNA、ABRC/NASC stock、EMS mutant、编辑材料或突变位点，不使用本 skill，应使用 gene_mutant_query。
+trigger: 查询基因信息、基因表达信息、基因表达研究、表达信息、表达研究、基因注释、基因功能、基因位置、基因长度、GO注释、KEGG注释、结构域、转录本、关联性状、文献信息、gene info、gene expression info、gene annotation、rice gene、水稻基因、maize gene、玉米基因、soybean gene、大豆基因、Arabidopsis gene、Arabidopsis thaliana、拟南芥基因、拟南芥、TAIR、AT基因、ID转换、基因别名转换；不用于突变体查询、突变体种子查询、T-DNA line、ABRC/NASC stock、EMS mutant、编辑突变体、突变材料或突变位点查询。
 execution_mode: generated_python
 data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.json, data/gene_info/maize_gene_info.json, data/gene_info/maize_gene_trans.json, data/gene_info/soy_gene_info.json, data/gene_info/soy_gene_trans.json, data/gene_info/ath_gene_info.json, data/gene_info/ath_gene_trans.json
 ---

@@ -351,6 +351,102 @@ def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypa
     assert "<truncated>" not in payload
 
 
+def test_generic_compaction_keeps_mutant_records_for_final_answer(monkeypatch) -> None:
+    class CaptureLLM:
+        available = True
+        settings = SimpleNamespace(answer_model="answer")
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def stream_chat(self, messages, *_args, **_kwargs):
+            self.calls.append(messages)
+            yield "mutant answer"
+
+    skill = make_skill("gene_mutant_query", "deterministic_python")
+    patch_route(monkeypatch, skill)
+
+    async def execute(*_args, **_kwargs):
+        return {
+            "mode": "deterministic_query",
+            "result": {
+                "status": "completed",
+                "analysis": "gene_mutant_query",
+                "query": "LOC_Os04g54860 有突变体吗？",
+                "record_limit": 30,
+                "species_searched": ["rice"],
+                "genes": ["LOC_Os04g54860"],
+                "gene_mappings": [
+                    {
+                        "input": "LOC_Os04g54860",
+                        "species": "rice",
+                        "species_label": "rice",
+                        "canonical_id": "LOC_Os04g54860",
+                        "query_id": "LOC_Os04g54860",
+                        "matched_by": "gene_trans",
+                    }
+                ],
+                "matches": [
+                    {
+                        "input": "LOC_Os04g54860",
+                        "species": "rice",
+                        "species_label": "rice",
+                        "database": "BGBIO",
+                        "canonical_id": "LOC_Os04g54860",
+                        "query_id": "LOC_Os04g54860",
+                        "matched_by": "gene_trans",
+                        "has_mutant": True,
+                        "total_hits": 7,
+                        "returned_records": 1,
+                        "records": [
+                            {
+                                "database": "BGBIO",
+                                "species": "rice",
+                                "germplasm_type": "突变体种子",
+                                "species_or_variety": "水稻/ZH11",
+                                "vector": "BGK03",
+                                "gene_id": "LOC_Os04g54860",
+                                "target_sequence": "GCAGTGGATGCAGGCTGATACGG",
+                                "validation": "纯合突变，G缺失",
+                            }
+                        ],
+                    }
+                ],
+                "not_found": [],
+            },
+        }
+
+    async def evaluate(**_kwargs):
+        return {
+            "category": "answer",
+            "answered": True,
+            "reason": "ok",
+            "missing": [],
+        }
+
+    monkeypatch.setattr(agent_graph, "execute_skill", execute)
+    monkeypatch.setattr(agent_graph, "evaluate_skill_result", evaluate)
+
+    llm = CaptureLLM()
+    graph = agent_graph.build_agent_graph(llm, emit)
+    asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "LOC_Os04g54860 有突变体吗？",
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+            }
+        )
+    )
+
+    payload = llm.calls[0][1]["content"]
+    assert "LOC_Os04g54860" in payload
+    assert "纯合突变，G缺失" in payload
+    assert "GCAGTGGATGCAGGCTGATACGG" in payload
+    assert "<truncated>" not in payload
+
+
 def test_registered_skill_receives_recent_history(monkeypatch) -> None:
     skill = make_skill("gene_phenotype_prediction", "deterministic_python")
     skill = SkillSpec(

@@ -43,6 +43,7 @@ const ALLOWED_MARKDOWN_TAGS = new Set([
   "p",
   "pre",
   "strong",
+  "sup",
   "table",
   "tbody",
   "td",
@@ -60,10 +61,10 @@ const ALLOWED_MARKDOWN_ATTRS = {
 };
 
 const suggestions = [
-  "解释一下大模型量化模型是什么",
-  "cold1基因",
-  "我上传了文件，帮我根据文件名和大小判断下一步怎么处理",
-  "如果没有涉及专门能力，就先按普通聊天回答我",
+  "COLD1 是什么基因？",
+  "LOC_Os04g54860 有突变体种子吗？",
+  "LOC_Os07g48050 可能跟哪些性状相关？",
+  "HY2 的功能研究路径是什么？",
 ];
 
 function loadUserId() {
@@ -337,7 +338,11 @@ function normalizeMarkdown(content) {
       }
       return part
         .replace(/\*\*([^*\n]*?\S[^*\n]*?)\s*\*\*/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`)
-        .replace(/__([^_\n]*?\S[^_\n]*?)\s*__/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`);
+        .replace(/__([^_\n]*?\S[^_\n]*?)\s*__/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`)
+        .replace(
+          /\b([A-Za-z][A-Za-z0-9_.-]{0,80})\^\{([A-Za-z0-9_.-]{1,24})\}/g,
+          (_match, gene, label) => `${gene}<sup>${label}</sup>`,
+        );
     })
     .join("");
 }
@@ -1334,12 +1339,10 @@ function MessageTurn({message, apiBase}) {
           ) : null}
           {!isUser && message.uiBlocks?.length ? <ResearchPathBlocks blocks={message.uiBlocks} /> : null}
         </div>
-        {!isUser ? (
-          <div className="message-meta">
-            {message.usage ? <span>{usageLabel(message.usage)}</span> : null}
-            <CopyButton text={message.content} />
-          </div>
-        ) : null}
+        <div className={`message-meta ${isUser ? "user-meta" : ""}`}>
+          {!isUser && message.usage ? <span>{usageLabel(message.usage)}</span> : null}
+          <CopyButton text={message.content} />
+        </div>
       </div>
     </article>
   );
