@@ -10,6 +10,7 @@ import pandas as pd
 import pyarrow.dataset as ds
 
 from backend.app.config import DATA_DIR
+from backend.app.services.id_mapping import with_id_mapping_summary
 
 
 PREDICTION_DATASETS = {
@@ -95,17 +96,19 @@ def run_gene_phenotype_prediction(message: str) -> dict[str, Any]:
                 }
             )
 
-    return {
-        "status": "completed",
-        "analysis": "gene_phenotype_prediction",
-        "query": message,
-        "top_k": top_k,
-        "species_searched": species_scope,
-        "genes": sorted({match["canonical_id"] for match in matches}),
-        "gene_mappings": _unique_gene_mappings(resolved),
-        "matches": matches,
-        "not_found": not_found,
-    }
+    return with_id_mapping_summary(
+        {
+            "status": "completed",
+            "analysis": "gene_phenotype_prediction",
+            "query": message,
+            "top_k": top_k,
+            "species_searched": species_scope,
+            "genes": sorted({match["canonical_id"] for match in matches}),
+            "gene_mappings": _unique_gene_mappings(resolved),
+            "matches": matches,
+            "not_found": not_found,
+        }
+    )
 
 
 def _unique_gene_mappings(items: list[dict[str, str]]) -> list[dict[str, str]]:

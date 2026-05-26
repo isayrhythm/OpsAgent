@@ -15,6 +15,7 @@ from backend.app.services.data_intake import (
     uploaded_files_prompt,
 )
 from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.services.id_mapping import enrich_skill_output_with_id_mapping, with_id_mapping_summary
 from backend.app.services.result_evaluator import compact_value, evaluate_skill_result
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec, load_skill, load_skill_catalog
@@ -139,6 +140,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 attachments=state.get("attachments", []),
                 data_profiles=state.get("data_profiles", []),
             )
+            skill_output = enrich_skill_output_with_id_mapping(skill_output)
             evaluation = await evaluate_skill_result(
                 user_message=state["message"],
                 resolved_message=state["message"],
@@ -185,6 +187,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     evaluation=evaluation,
                     emit=emit,
                 )
+                skill_output = enrich_skill_output_with_id_mapping(skill_output)
             except Exception as retry_exc:
                 retry_code = retry_exc.code if isinstance(retry_exc, SkillCodeExecutionError) else None
                 await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
@@ -240,6 +243,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     evaluation=evaluation,
                     emit=emit,
                 )
+                skill_output = enrich_skill_output_with_id_mapping(skill_output)
             except Exception as retry_exc:
                 retry_code = retry_exc.code if isinstance(retry_exc, SkillCodeExecutionError) else None
                 await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
@@ -302,11 +306,25 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         if not isinstance(value, dict):
             return compact_value(value)
         result = value.get("result")
+        result = with_id_mapping_summary(result)
+        if result is not value.get("result"):
+            value = {**value, "result": result}
         if isinstance(result, dict) and result.get("analysis") == "gene_phenotype_prediction":
             answer_result = {
                 key: item
                 for key, item in result.items()
-                if key in {"status", "analysis", "query", "top_k", "species_searched", "genes", "not_found"}
+                if key
+                in {
+                    "status",
+                    "analysis",
+                    "query",
+                    "top_k",
+                    "species_searched",
+                    "genes",
+                    "not_found",
+                    "id_mapping_performed",
+                    "id_mapping_summary",
+                }
             }
             answer_result["gene_mappings"] = result.get("gene_mappings", [])
             answer_result["matches"] = [

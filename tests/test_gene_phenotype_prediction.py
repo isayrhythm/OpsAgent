@@ -36,6 +36,10 @@ def test_gene_phenotype_prediction_uses_mapping_and_top_k(tmp_path, monkeypatch)
             "matched_by": "gene_trans",
         }
     ]
+    assert result["id_mapping_performed"] is True
+    assert result["id_mapping_summary"][0]["source_id"] == "LOC_Os07g48050"
+    assert result["id_mapping_summary"][0]["canonical_id"] == "AGIS_Os07g033940"
+    assert "ID mapping applied: LOC_Os07g48050 -> AGIS_Os07g033940" in result["id_mapping_summary"][0]["message"]
     assert [item["phenotype"] for item in result["matches"][0]["predictions"]] == [
         "plant_height",
         "drought_tolerance",

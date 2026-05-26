@@ -347,6 +347,8 @@ def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypa
     payload = llm.calls[0][1]["content"]
     assert "rice_blast_resistance" in payload
     assert "gene_mappings" in payload
+    assert "id_mapping_summary" in payload
+    assert "ID mapping applied: LOC_Os07g48050 -> AGIS_Os07g043560" in payload
     assert "AGIS_Os07g043560" in payload
     assert "<truncated>" not in payload
 
@@ -442,6 +444,8 @@ def test_generic_compaction_keeps_mutant_records_for_final_answer(monkeypatch) -
 
     payload = llm.calls[0][1]["content"]
     assert "LOC_Os04g54860" in payload
+    assert "id_mapping_summary" in payload
+    assert "ID mapping applied: LOC_Os04g54860 -> LOC_Os04g54860" in payload
     assert "纯合突变，G缺失" in payload
     assert "GCAGTGGATGCAGGCTGATACGG" in payload
     assert "<truncated>" not in payload

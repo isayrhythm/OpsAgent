@@ -55,6 +55,9 @@ def test_gene_mutant_query_resolves_rice_alias_and_queries_bgbio(tmp_path, monke
     result = gene_mutant_query.run_gene_mutant_query("COLD1 有没有突变体？")
 
     assert result["gene_mappings"][0]["canonical_id"] == "LOC_Os04g51180"
+    assert result["id_mapping_performed"] is True
+    assert result["id_mapping_summary"][0]["source_id"] == "COLD1"
+    assert result["id_mapping_summary"][0]["canonical_id"] == "LOC_Os04g51180"
     assert result["matches"][0]["has_mutant"] is True
     assert result["matches"][0]["total_hits"] == 1
     assert result["matches"][0]["purchase_url"] == "https://www.seedseek.cn/?locus=LOC_Os04g51180"
@@ -112,4 +115,7 @@ def test_gene_mutant_query_reports_species_with_mapping_but_no_database(tmp_path
 
     assert result["matches"] == []
     assert result["not_found"][0]["species"] == "soy"
+    assert result["id_mapping_performed"] is True
+    assert result["id_mapping_summary"][0]["source_id"] == "Glyma.01G000100"
+    assert result["id_mapping_summary"][0]["canonical_id"] == "Glyma.01G000100"
     assert "No mutant database" in result["not_found"][0]["reason"]

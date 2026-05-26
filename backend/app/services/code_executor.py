@@ -13,6 +13,7 @@ from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.services.id_mapping import enrich_skill_output_with_id_mapping
 from backend.app.services.result_evaluator import compact_value
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.services.skill_runtime import SkillContractError, SkillExecutionContext, execute_registered_skill
@@ -250,7 +251,7 @@ async def execute_skill(
     data_profiles: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if skill.executor:
-        return await execute_registered_skill(
+        output = await execute_registered_skill(
             skill,
             SkillExecutionContext(
                 message=message,
@@ -261,6 +262,7 @@ async def execute_skill(
                 emit=emit,
             ),
         )
+        return enrich_skill_output_with_id_mapping(output)
 
     if skill.execution_mode.startswith("deterministic"):
         raise SkillContractError(f"Deterministic skill requires a registered executor: {skill.name}")
@@ -274,11 +276,13 @@ async def execute_skill(
         }
 
     code, result = await run_generated_skill_code(skill_message, skill, llm, emit)
-    return {
-        "mode": "generated_code",
-        "code": textwrap.shorten(code.replace("\n", " "), width=500, placeholder="..."),
-        "result": result,
-    }
+    return enrich_skill_output_with_id_mapping(
+        {
+            "mode": "generated_code",
+            "code": textwrap.shorten(code.replace("\n", " "), width=500, placeholder="..."),
+            "result": result,
+        }
+    )
 
 
 async def retry_skill(
@@ -299,9 +303,11 @@ async def retry_skill(
         "evaluation": evaluation,
     }
     code, result = await run_generated_skill_code(message, skill, llm, emit, retry_feedback, is_retry=True)
-    return {
-        "mode": "generated_code_retry",
-        "code": textwrap.shorten(code.replace("\n", " "), width=500, placeholder="..."),
-        "result": result,
-        "retry_feedback": compact_value(retry_feedback),
-    }
+    return enrich_skill_output_with_id_mapping(
+        {
+            "mode": "generated_code_retry",
+            "code": textwrap.shorten(code.replace("\n", " "), width=500, placeholder="..."),
+            "result": result,
+            "retry_feedback": compact_value(retry_feedback),
+        }
+    )

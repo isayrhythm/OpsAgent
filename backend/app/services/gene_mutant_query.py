@@ -10,6 +10,7 @@ import pandas as pd
 import pyarrow.dataset as ds
 
 from backend.app.config import DATA_DIR
+from backend.app.services.id_mapping import with_id_mapping_summary
 
 
 @dataclass(frozen=True)
@@ -173,17 +174,19 @@ def run_gene_mutant_query(message: str) -> dict[str, Any]:
         if not any(key[0] == term.lower() for key in resolved_keys):
             not_found.append({"input": term, "reason": "No matching gene mapping was found."})
 
-    return {
-        "status": "completed",
-        "analysis": "gene_mutant_query",
-        "query": message,
-        "record_limit": record_limit,
-        "species_searched": species_scope,
-        "genes": sorted({match["canonical_id"] for match in matches}),
-        "gene_mappings": _unique_gene_mappings(resolved),
-        "matches": matches,
-        "not_found": _dedupe_not_found(not_found),
-    }
+    return with_id_mapping_summary(
+        {
+            "status": "completed",
+            "analysis": "gene_mutant_query",
+            "query": message,
+            "record_limit": record_limit,
+            "species_searched": species_scope,
+            "genes": sorted({match["canonical_id"] for match in matches}),
+            "gene_mappings": _unique_gene_mappings(resolved),
+            "matches": matches,
+            "not_found": _dedupe_not_found(not_found),
+        }
+    )
 
 
 def _extract_record_limit(message: str) -> int:
