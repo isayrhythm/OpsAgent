@@ -340,6 +340,10 @@ function normalizeMarkdown(content) {
         .replace(/\*\*([^*\n]*?\S[^*\n]*?)\s*\*\*/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`)
         .replace(/__([^_\n]*?\S[^_\n]*?)\s*__/g, (_match, text) => `<strong>${text.trimEnd()}</strong>`)
         .replace(
+          /\b([A-Za-z][A-Za-z0-9_.-]{1,48})\s*[（(](https?:\/\/[^\s（）)]+)[）)]/g,
+          (_match, label, url) => `[${label}](${url})`,
+        )
+        .replace(
           /\b([A-Za-z][A-Za-z0-9_.-]{0,80})\^\{([A-Za-z0-9_.-]{1,24})\}/g,
           (_match, gene, label) => `${gene}<sup>${label}</sup>`,
         );

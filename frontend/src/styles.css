@@ -775,6 +775,11 @@ button {
   line-height: 1.75;
 }
 
+.markdown-body a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .markdown-body a.citation-link {
   display: inline-flex;
   align-items: center;
