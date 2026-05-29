@@ -24,8 +24,8 @@ PREDICTION_CSV_FALLBACKS = {
 }
 
 GENE_TRANS_PATHS = {
-    "maize": DATA_DIR / "gene_info" / "maize_gene_trans.json",
-    "rice": DATA_DIR / "gene_info" / "rice_gene_trans.json",
+    "maize": DATA_DIR / "gene_trans" / "maize_gene_trans.json",
+    "rice": DATA_DIR / "gene_trans" / "rice_gene_trans.json",
 }
 
 SPECIES_LABELS = {

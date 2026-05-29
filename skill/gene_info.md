@@ -4,7 +4,7 @@ version: 1
 description: 当用户请求查询水稻、玉米、大豆或拟南芥基因的基本信息、表达信息、表达研究、注释、功能、位置、别名对应关系或关联性状文本块时触发；如果用户询问突变体、突变体种子、T-DNA、ABRC/NASC stock、EMS mutant、编辑材料或突变位点，不使用本 skill，应使用 gene_mutant_query。
 trigger: 查询基因信息、基因表达信息、基因表达研究、表达信息、表达研究、基因注释、基因功能、基因位置、基因长度、GO注释、KEGG注释、结构域、转录本、关联性状、文献信息、gene info、gene expression info、gene annotation、rice gene、水稻基因、maize gene、玉米基因、soybean gene、大豆基因、Arabidopsis gene、Arabidopsis thaliana、拟南芥基因、拟南芥、TAIR、AT基因、ID转换、基因别名转换；不用于突变体查询、突变体种子查询、T-DNA line、ABRC/NASC stock、EMS mutant、编辑突变体、突变材料或突变位点查询。
 execution_mode: generated_python
-data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.json, data/gene_info/maize_gene_info.json, data/gene_info/maize_gene_trans.json, data/gene_info/soy_gene_info.json, data/gene_info/soy_gene_trans.json, data/gene_info/ath_gene_info.json, data/gene_info/ath_gene_trans.json
+data_paths: data/gene_info/rice_gene_info.json, data/gene_trans/rice_gene_trans.json, data/gene_info/maize_gene_info.json, data/gene_trans/maize_gene_trans.json, data/gene_info/soy_gene_info.json, data/gene_trans/soy_gene_trans.json, data/gene_info/ath_gene_info.json, data/gene_trans/ath_gene_trans.json
 ---
 
 # Query Gene Info Skill
@@ -24,7 +24,7 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
 - 不要包含危险操作，例如 `os.system`、删除文件、启动子进程等。
 - 不要导入或使用 `os`、`pathlib`、`subprocess`、`shutil`、`socket`。
 - 不要直接调用内置 `open()`。读取 JSON 时使用 `import json, io`，再使用 `io.open(path, "r", encoding="utf-8")`。
-- 数据目录变量可直接使用执行环境提供的 `DATA_DIR`，例如：`DATA_DIR + "/gene_info/rice_gene_trans.json"`。
+- 数据目录变量可直接使用执行环境提供的 `DATA_DIR`，例如：`DATA_DIR + "/gene_trans/rice_gene_trans.json"`。
 - 如果用户明确说明物种，只读取对应物种的 `*_gene_trans.json` 和必要的 `*_gene_info.json`。
 - 如果用户没有明确说明物种，先在四个物种的 `*_gene_trans.json` 和标准 ID 中查找；只对命中的物种读取对应的 `*_gene_info.json`。
 - 不要为了模糊搜索而全量扫描 `*_gene_info.json` 的文本内容；这些文件很大。只有在已确定标准基因 ID 后才读取对应 info 文件并取值。
@@ -38,10 +38,10 @@ data_paths: data/gene_info/rice_gene_info.json, data/gene_info/rice_gene_trans.j
 
 | 物种 | 用户可能说法 | 标准 ID 示例 | trans 文件 | info 文件 |
 | ---- | ------------ | ------------ | ---------- | --------- |
-| rice | 水稻、rice、Oryza、Os、LOC_Os、RAP | `AGIS_Os09g012290` | `data/gene_info/rice_gene_trans.json` | `data/gene_info/rice_gene_info.json` |
-| maize | 玉米、maize、corn、Zea、Zm、B73 | `Zm00001eb000020` | `data/gene_info/maize_gene_trans.json` | `data/gene_info/maize_gene_info.json` |
-| soy | 大豆、soy、soybean、Glycine、Glyma、GmW82 | `Glyma.15G027500` | `data/gene_info/soy_gene_trans.json` | `data/gene_info/soy_gene_info.json` |
-| arabidopsis | 拟南芥、Arabidopsis、Arabidopsis thaliana、TAIR、Araport、AT | `AT1G01010` | `data/gene_info/ath_gene_trans.json` | `data/gene_info/ath_gene_info.json` |
+| rice | 水稻、rice、Oryza、Os、LOC_Os、RAP | `AGIS_Os09g012290` | `data/gene_trans/rice_gene_trans.json` | `data/gene_info/rice_gene_info.json` |
+| maize | 玉米、maize、corn、Zea、Zm、B73 | `Zm00001eb000020` | `data/gene_trans/maize_gene_trans.json` | `data/gene_info/maize_gene_info.json` |
+| soy | 大豆、soy、soybean、Glycine、Glyma、GmW82 | `Glyma.15G027500` | `data/gene_trans/soy_gene_trans.json` | `data/gene_info/soy_gene_info.json` |
+| arabidopsis | 拟南芥、Arabidopsis、Arabidopsis thaliana、TAIR、Araport、AT | `AT1G01010` | `data/gene_trans/ath_gene_trans.json` | `data/gene_info/ath_gene_info.json` |
 
 ## Data
 

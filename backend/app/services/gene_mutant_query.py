@@ -88,10 +88,10 @@ MUTANT_DATASETS = {
 }
 
 GENE_TRANS_PATHS = {
-    "ath": DATA_DIR / "mutant_db" / "ath_gene_trans.json",
+    "ath": DATA_DIR / "gene_trans" / "ath_gene_trans.json",
     "rice": DATA_DIR / "mutant_db" / "rice_gene_trans.json",
-    "soy": DATA_DIR / "mutant_db" / "soy_gene_trans.json",
-    "maize": DATA_DIR / "mutant_db" / "maize_gene_trans.json",
+    "soy": DATA_DIR / "gene_trans" / "soy_gene_trans.json",
+    "maize": DATA_DIR / "gene_trans" / "maize_gene_trans.json",
 }
 
 SPECIES_LABELS = {

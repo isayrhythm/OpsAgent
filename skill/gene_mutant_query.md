@@ -8,7 +8,7 @@ executor: gene_mutant_query
 argument_resolver: message
 input_schema: skill/schemas/gene_mutant_query.input.json
 output_schema: skill/schemas/gene_mutant_query.output.json
-data_paths: data/mutant_db/ath_abrc.parquet, data/mutant_db/rice_bgbio.parquet, data/mutant_db/maize_ems.parquet, data/mutant_db/ath_gene_trans.json, data/mutant_db/rice_gene_trans.json, data/mutant_db/soy_gene_trans.json, data/mutant_db/maize_gene_trans.json
+data_paths: data/mutant_db/ath_abrc.parquet, data/mutant_db/rice_bgbio.parquet, data/mutant_db/maize_ems.parquet, data/gene_trans/ath_gene_trans.json, data/mutant_db/rice_gene_trans.json, data/gene_trans/soy_gene_trans.json, data/gene_trans/maize_gene_trans.json
 ---
 
 # Gene Mutant Query Skill
@@ -17,7 +17,7 @@ data_paths: data/mutant_db/ath_abrc.parquet, data/mutant_db/rice_bgbio.parquet, 
 
 - 输入：用户自然语言请求，通常包含基因 ID、旧 ID、别名或 gene symbol。
 - 查询目标：判断基因在本地突变体数据库中是否有突变体/种子/stock/EMS/编辑材料记录。
-- 映射：先用 `data/mutant_db/*_gene_trans.json` 将用户输入标准化到对应数据库可查 ID。
+- 映射：默认使用公共映射目录 `data/gene_trans/*_gene_trans.json` 将用户输入标准化到对应数据库可查 ID；水稻突变体查询是特例，使用 `data/mutant_db/rice_gene_trans.json`。
 - 查询：只按标准化后的基因 ID 精确过滤数据库主键字段，不做全表模糊文本搜索。
 - 输出：JSON/dict，必须包含 `analysis`, `gene_mappings`, `matches`, `not_found`。
 
@@ -26,7 +26,7 @@ data_paths: data/mutant_db/ath_abrc.parquet, data/mutant_db/rice_bgbio.parquet, 
 - Arabidopsis: `data/mutant_db/ath_abrc.parquet`, query column `gene_id`.
 - Rice: `data/mutant_db/rice_bgbio.parquet`, query column `基因号`.
 - Maize: `data/mutant_db/maize_ems.parquet`, query column `GeneID`.
-- Soybean: 当前只有 `soy_gene_trans.json` 映射，没有突变体数据库；如果用户查询大豆，返回明确的 no database 说明。
+- Soybean: 当前只有 `data/gene_trans/soy_gene_trans.json` 映射，没有突变体数据库；如果用户查询大豆，返回明确的 no database 说明。
 
 ## Behavior
 

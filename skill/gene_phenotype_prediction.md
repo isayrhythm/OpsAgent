@@ -8,7 +8,7 @@ executor: gene_phenotype_prediction
 argument_resolver: message
 input_schema: skill/schemas/gene_phenotype_prediction.input.json
 output_schema: skill/schemas/gene_phenotype_prediction.output.json
-data_paths: data/GenePredictor/maize_lte_result.parquet, data/GenePredictor/rice_lte_result.parquet, data/GenePredictor/maize_lte_result.csv, data/GenePredictor/rice_lte_result.csv, data/gene_info/maize_gene_trans.json, data/gene_info/rice_gene_trans.json
+data_paths: data/GenePredictor/maize_lte_result.parquet, data/GenePredictor/rice_lte_result.parquet, data/GenePredictor/maize_lte_result.csv, data/GenePredictor/rice_lte_result.csv, data/gene_trans/maize_gene_trans.json, data/gene_trans/rice_gene_trans.json
 ---
 
 # Gene Phenotype Prediction Skill
@@ -17,7 +17,7 @@ data_paths: data/GenePredictor/maize_lte_result.parquet, data/GenePredictor/rice
 
 - 输入：用户自然语言请求，通常包含水稻或玉米基因 ID、旧 ID、别名或 gene symbol。
 - 数据源：优先读取 `data/GenePredictor/maize_lte_result.parquet` 和 `data/GenePredictor/rice_lte_result.parquet`；如果 Parquet 不存在，再回退读取同名 CSV。
-- 映射：复用基因查询数据中的 `maize_gene_trans.json` 和 `rice_gene_trans.json` 将别名映射到标准 ID。
+- 映射：使用公共映射目录 `data/gene_trans/maize_gene_trans.json` 和 `data/gene_trans/rice_gene_trans.json` 将别名映射到标准 ID。
 - 输出：JSON/dict，必须包含命中的基因、物种、top-k 表型预测和预测分数。
 
 ## Behavior

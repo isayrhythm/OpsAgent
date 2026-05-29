@@ -475,10 +475,10 @@ data: {"type":"progress","step":1,"status":"正在路由","data":{}}
 
 | 文件 | 用途 |
 |---|---|
-| `data/mutant_db/ath_gene_trans.json` | 拟南芥别名到 ABRC 可查 gene ID |
+| `data/gene_trans/ath_gene_trans.json` | 拟南芥别名到 ABRC 可查 gene ID |
 | `data/mutant_db/rice_gene_trans.json` | 水稻别名、AGIS、RapDB、LOC 到 BGBIO 可查 LOC ID |
-| `data/mutant_db/maize_gene_trans.json` | 玉米别名到 Maize EMS 可查 gene ID |
-| `data/mutant_db/soy_gene_trans.json` | 大豆别名映射；当前没有对应突变体数据库，仅用于解释 no database |
+| `data/gene_trans/maize_gene_trans.json` | 玉米别名到 Maize EMS 可查 gene ID |
+| `data/gene_trans/soy_gene_trans.json` | 大豆别名映射；当前没有对应突变体数据库，仅用于解释 no database |
 
 ## 5. 错误码
 
