@@ -349,6 +349,65 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 if isinstance(match, dict)
             ]
             return {**value, "result": answer_result}
+        if isinstance(result, dict) and result.get("analysis") == "trait2gene_query":
+            answer_result = {
+                key: item
+                for key, item in result.items()
+                if key
+                in {
+                    "status",
+                    "analysis",
+                    "query",
+                    "classification",
+                    "top_k",
+                    "species_searched",
+                    "not_found",
+                    "message",
+                    "supported_species",
+                }
+            }
+            answer_result["answer_requirements"] = [
+                "Use only literature/source/evidence returned in this result.",
+                "For reported trait-associated genes, include literature evidence when available.",
+                "Do not invent paper titles, authors, years, DOI, or sources.",
+            ]
+            answer_result["matches"] = [
+                {
+                    "species": match.get("species"),
+                    "species_label": match.get("species_label"),
+                    "categories": match.get("categories", []),
+                    "match_mode": match.get("match_mode"),
+                    "total_genes": match.get("total_genes"),
+                    "returned_genes": match.get("returned_genes"),
+                    "source_counts": (match.get("source_counts") or [])[:6],
+                    "references": (match.get("references") or [])[:10],
+                    "genes": [
+                        {
+                            "gene_id": gene.get("gene_id"),
+                            "gene_names": gene.get("gene_names") or [],
+                            "categories": gene.get("categories") or [],
+                            "evidence_count": gene.get("evidence_count"),
+                            "sources": gene.get("sources") or [],
+                            "references": (gene.get("references") or [])[:4],
+                            "evidence": [
+                                {
+                                    "category": item.get("category"),
+                                    "trait": item.get("trait"),
+                                    "literature": item.get("literature"),
+                                    "source": item.get("source"),
+                                }
+                                for item in (gene.get("evidence") or [])[:3]
+                                if isinstance(item, dict)
+                            ],
+                        }
+                        for gene in (match.get("genes") or [])[:12]
+                        if isinstance(gene, dict)
+                    ],
+                }
+                for match in result.get("matches", [])
+                if isinstance(match, dict)
+            ]
+            return compact_value({**value, "result": answer_result})
         if not isinstance(result, dict) or not result.get("ui_blocks"):
             return compact_value(value)
         answer_result = {key: item for key, item in result.items() if key not in {"matches", "ui_blocks"}}
@@ -543,3 +602,4 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
     graph.add_edge("execute_skill", "final_answer")
     graph.add_edge("final_answer", END)
     return graph.compile()
+

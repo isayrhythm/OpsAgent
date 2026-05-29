@@ -24,14 +24,17 @@ data_paths: data/trait2gene/ath_trait2gene_paper_tair_3.csv, data/trait2gene/gen
   - maize: `data/trait2gene/maize_db_trait158_v5.csv`
   - soybean: `data/trait2gene/SoyGeneDB_trait164_v2.csv`
 - 输出：JSON/dict，包含 LLM 选择的分类、命中的物种、总基因数、返回的 top genes、证据来源和参考文献。
+- 最终回答必须优先展示工具返回的 `evidence` / `references`；如果工具结果没有文献字段，不得自行编造文献标题、作者、年份或 DOI。
 
 ## Behavior
 
 - 本 skill 回答“性状 -> 基因”问题。
 - “基因 -> 可能性状/表型预测”问题应使用 `gene_phenotype_prediction`。
+- 用户必须明确给出物种；如果用户没有说明物种，应先请用户补充物种，不要跨物种直接查询。
 - 如果用户明确给出物种，只返回该物种结果。
-- 如果用户没有明确物种，分类器可以在多个物种中选择语义匹配的分类。
 - 默认返回每个物种最多 20 个高证据基因；如果用户明确要求 top-k/前 N 个，最多返回 100 个。
+- 宽泛上位性状映射到多个 `classify2` 时使用并集，例如“大豆产量相关基因”可映射到百粒重、单株荚数、单荚粒数、植株重量等，返回任一分类相关的基因。
+- 只有用户明确要求“同时包含/共同影响/兼具”多个性状时，才使用交集。
 - 查询不到时必须说明“未在当前 trait2gene 数据库中检索到”，不能编造基因。
 
 ## Result Shape
@@ -66,6 +69,14 @@ data_paths: data/trait2gene/ath_trait2gene_paper_tair_3.csv, data/trait2gene/gen
           "evidence_count": 3,
           "sources": ["RAP-DB"],
           "references": ["..."],
+          "evidence": [
+            {
+              "category": "soil salinity tolerance",
+              "trait": "...",
+              "literature": "...",
+              "source": "literature"
+            }
+          ],
           "trait_examples": ["..."]
         }
       ],

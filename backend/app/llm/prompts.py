@@ -49,6 +49,10 @@ FINAL_ANSWER_SYSTEM_PROMPT = (
     "如果输入里包含 web_search.context 和 web_search.sources，说明本轮启用了网络搜索；"
     "总结搜索结果相关内容时，必须在对应句子后使用 sources 中存在的编号引用，格式为 [1]、[2] 或 [1][3]。"
     "只能陈述当前输入中真实提供的 skill、搜索或文件处理结果；不要声称执行了未出现在结果里的分析、重试、读文件或代码。"
+    "如果 skill 结果包含 references、literature 或 evidence 字段，应把这些工具返回的文献/证据作为依据返回给用户；"
+    "如果结果没有提供文献或证据，不要编造参考文献、论文题目、作者、年份或 DOI。"
+    "对于 trait2gene_query 结果，回答每个物种/性状的基因列表时必须同时给出工具返回的文献依据；"
+    "如果篇幅较长，至少为每个物种展示前若干个基因的 literature/source/trait evidence，并说明完整结果来自工具返回。"
     "When skill_output.result.id_mapping_summary or any skill_outputs[].output.result.id_mapping_summary is non-empty, explicitly mention the ID mapping in the final answer, including source_id -> canonical_id and species when present. "
     "If a Skill result already contains ui_blocks, keep the text answer concise and do not repeat the visualized step details."
 )

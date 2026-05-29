@@ -159,6 +159,124 @@ def test_research_path_skill_emits_ui_steps(monkeypatch) -> None:
     assert ui_events[1][3]["step"]["stage_operation"] == "Rescue"
 
 
+def test_trait2gene_composite_question_sends_literature_evidence_to_final_llm(monkeypatch) -> None:
+    class CaptureFinalLLM:
+        available = True
+        settings = SimpleNamespace(answer_model="answer")
+
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def stream_chat(self, messages, *_args, **_kwargs):
+            self.calls.append(messages)
+            yield "LLM 整理后的回答，含 Paper A 和 Paper B。"
+
+    skill = make_skill("trait2gene_query", "deterministic_python")
+    patch_route(monkeypatch, skill)
+    events = []
+    message = "大豆产量相关的基因有哪些？水稻株高相关的基因有哪些？"
+
+    async def capture(event_type, step, status, data=None) -> None:
+        events.append((event_type, step, status, data))
+
+    async def execute(*_args, **_kwargs):
+        return {
+            "mode": "deterministic_query",
+            "result": {
+                "status": "completed",
+                "analysis": "trait2gene_query",
+                "query": message,
+                "matches": [
+                    {
+                        "species": "soy",
+                        "species_label": "soybean",
+                        "categories": ["100-seed weight"],
+                        "match_mode": "any",
+                        "total_genes": 1,
+                        "returned_genes": 1,
+                        "references": ["Paper A"],
+                        "genes": [
+                            {
+                                "gene_id": "S1",
+                                "gene_names": ["SW1"],
+                                "categories": ["100-seed weight"],
+                                "evidence_count": 1,
+                                "references": ["Paper A"],
+                                "evidence": [
+                                    {
+                                        "category": "100-seed weight",
+                                        "trait": "seed weight trait",
+                                        "literature": "Paper A",
+                                        "source": "pubmed",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "species": "rice",
+                        "species_label": "rice",
+                        "categories": ["plant height"],
+                        "match_mode": "all",
+                        "total_genes": 1,
+                        "returned_genes": 1,
+                        "references": ["Paper B"],
+                        "genes": [
+                            {
+                                "gene_id": "G1",
+                                "gene_names": ["PH1"],
+                                "categories": ["plant height"],
+                                "evidence_count": 1,
+                                "references": ["Paper B"],
+                                "evidence": [
+                                    {
+                                        "category": "plant height",
+                                        "trait": "plant stature",
+                                        "literature": "Paper B",
+                                        "source": "RAP-DB",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            },
+        }
+
+    async def evaluate(**_kwargs):
+        return {
+            "category": "answer",
+            "answered": True,
+            "reason": "ok",
+            "missing": [],
+        }
+
+    monkeypatch.setattr(agent_graph, "execute_skill", execute)
+    monkeypatch.setattr(agent_graph, "evaluate_skill_result", evaluate)
+
+    llm = CaptureFinalLLM()
+    graph = agent_graph.build_agent_graph(llm, capture)
+    result = asyncio.run(
+        graph.ainvoke(
+            {
+                "message": message,
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+            }
+        )
+    )
+
+    answer_events = [event for event in events if event[0] == "answer_delta"]
+    final_payload = llm.calls[0][1]["content"]
+    assert result["answer"] == "LLM 整理后的回答，含 Paper A 和 Paper B。"
+    assert answer_events[-1][3]["delta"] == result["answer"]
+    assert message in final_payload
+    assert "Paper A" in final_payload
+    assert "Paper B" in final_payload
+    assert "evidence" in final_payload
+
+
 def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch) -> None:
     class SearchLLM:
         available = True
