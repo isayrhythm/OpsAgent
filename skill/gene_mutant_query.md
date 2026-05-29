@@ -35,6 +35,7 @@ data_paths: data/mutant_db/ath_abrc.parquet, data/mutant_db/rice_bgbio.parquet, 
 - 如果用户没有明确物种，根据基因 ID 形态或映射命中判断物种。
 - 如果命中记录，返回 `has_mutant: true`、`total_hits` 和前若干条记录。
 - 水稻 BGBIO 命中时返回 `purchase_url`，格式为 `https://www.seedseek.cn/?locus={LOC_ID}`；最终回答应把该链接给用户，并说明可在该页面查看材料并下单购买。
+- 拟南芥 ABRC/NASC 命中时返回 `purchase_url`，格式为 `https://abrc.osu.edu/stocks?search%5Btaxon%5D=Arabidopsis+thaliana&search%5Bsearch_text%5D={AT_ID}&search%5Bsearch_fields%5D=All`；最终回答应把该链接给用户，说明可在 ABRC stocks 页面继续查看对应材料。
 - 默认最多返回 30 条记录；用户可用 `top N` 或 `limit N` 指定，最大 100。
 - 如果映射成功但数据库没有命中，返回 `not_found`，并说明是数据库中没有该基因记录。
 

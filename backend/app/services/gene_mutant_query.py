@@ -40,6 +40,12 @@ MUTANT_DATASETS = {
             "price": "Base / Commercial Price",
             "description": "description",
         },
+        purchase_url_template=(
+            "https://abrc.osu.edu/stocks?"
+            "search%5Btaxon%5D=Arabidopsis+thaliana&"
+            "search%5Bsearch_text%5D={gene_id}&"
+            "search%5Bsearch_fields%5D=All"
+        ),
     ),
     "rice": MutantDataset(
         species="rice",

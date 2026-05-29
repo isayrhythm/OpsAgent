@@ -95,6 +95,12 @@ def test_gene_mutant_query_queries_ath_abrc_by_direct_id(tmp_path, monkeypatch):
                     "stock_number": "Name / Stock Number",
                     "description": "description",
                 },
+                purchase_url_template=(
+                    "https://abrc.osu.edu/stocks?"
+                    "search%5Btaxon%5D=Arabidopsis+thaliana&"
+                    "search%5Bsearch_text%5D={gene_id}&"
+                    "search%5Bsearch_fields%5D=All"
+                ),
             )
         },
     )
@@ -102,6 +108,12 @@ def test_gene_mutant_query_queries_ath_abrc_by_direct_id(tmp_path, monkeypatch):
     result = gene_mutant_query.run_gene_mutant_query("AT2G30410 有没有 T-DNA 突变体种子？")
 
     assert result["matches"][0]["database"] == "ABRC/NASC"
+    assert result["matches"][0]["purchase_url"] == (
+        "https://abrc.osu.edu/stocks?"
+        "search%5Btaxon%5D=Arabidopsis+thaliana&"
+        "search%5Bsearch_text%5D=AT2G30410&"
+        "search%5Bsearch_fields%5D=All"
+    )
     assert result["matches"][0]["records"][0]["stock_number"] == "SALK_103838"
 
 
