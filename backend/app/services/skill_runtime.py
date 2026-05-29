@@ -14,6 +14,7 @@ from backend.app.services.gene_function_research_path import run_gene_function_r
 from backend.app.services.gene_mutant_query import run_gene_mutant_query
 from backend.app.services.gene_phenotype_prediction import run_gene_phenotype_prediction
 from backend.app.services.skill_loader import SkillSpec
+from backend.app.services.trait2gene import classify_trait2gene_query, run_trait2gene_query
 
 
 Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
@@ -134,6 +135,15 @@ async def _run_gene_mutant_query(
     _context: SkillExecutionContext,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(run_gene_mutant_query, invocation.arguments["message"])
+
+
+async def _run_trait2gene_query(
+    invocation: SkillInvocation,
+    context: SkillExecutionContext,
+) -> dict[str, Any]:
+    message = invocation.arguments["message"]
+    classification = await classify_trait2gene_query(message, context.llm)
+    return await asyncio.to_thread(run_trait2gene_query, message, classification)
 
 
 async def _run_differential_protein(
@@ -275,6 +285,11 @@ SKILL_EXECUTORS = {
         name="gene_mutant_query",
         mode="deterministic_query",
         run=_run_gene_mutant_query,
+    ),
+    "trait2gene_query": SkillExecutorBinding(
+        name="trait2gene_query",
+        mode="deterministic_query",
+        run=_run_trait2gene_query,
     ),
     "differential_protein_analysis": SkillExecutorBinding(
         name="differential_protein_analysis",
