@@ -1,0 +1,58 @@
+{
+  "type": "object",
+  "required": ["status", "analysis", "query", "classification", "matches", "not_found"],
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "analysis": {
+      "type": "string"
+    },
+    "query": {
+      "type": "string"
+    },
+    "classification": {
+      "type": "object"
+    },
+    "top_k": {
+      "type": "integer"
+    },
+    "requested_sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "species_searched": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "genes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "gene_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "not_found": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true
+}

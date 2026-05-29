@@ -408,6 +408,64 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 if isinstance(match, dict)
             ]
             return compact_value({**value, "result": answer_result})
+        if isinstance(result, dict) and result.get("analysis") == "primer_query":
+            answer_result = {
+                key: item
+                for key, item in result.items()
+                if key
+                in {
+                    "status",
+                    "analysis",
+                    "query",
+                    "classification",
+                    "top_k",
+                    "requested_sources",
+                    "species_searched",
+                    "genes",
+                    "gene_mappings",
+                    "id_mapping_performed",
+                    "id_mapping_summary",
+                    "not_found",
+                }
+            }
+            answer_result["answer_requirements"] = [
+                "Present primer pairs in a concise table.",
+                "Include forward/reverse sequences and product_length for each primer pair.",
+                "Mention that product_length is the precomputed PCR amplicon length.",
+                "If no primer was found, use reason_zh and do not invent primer sequences.",
+            ]
+            answer_result["matches"] = [
+                {
+                    "input": match.get("input"),
+                    "species": match.get("species"),
+                    "species_label": match.get("species_label"),
+                    "canonical_id": match.get("canonical_id"),
+                    "query_id": match.get("query_id"),
+                    "matched_by": match.get("matched_by"),
+                    "primer_source": match.get("primer_source"),
+                    "primer_source_label": match.get("primer_source_label"),
+                    "total_hits": match.get("total_hits"),
+                    "returned_primers": match.get("returned_primers"),
+                    "note": match.get("note"),
+                    "primers": [
+                        {
+                            "primer_pair": primer.get("primer_pair"),
+                            "forward_sequence": primer.get("forward_sequence"),
+                            "forward_tm": primer.get("forward_tm"),
+                            "forward_gc": primer.get("forward_gc"),
+                            "reverse_sequence": primer.get("reverse_sequence"),
+                            "reverse_tm": primer.get("reverse_tm"),
+                            "reverse_gc": primer.get("reverse_gc"),
+                            "product_length": primer.get("product_length"),
+                        }
+                        for primer in (match.get("primers") or [])[:12]
+                        if isinstance(primer, dict)
+                    ],
+                }
+                for match in result.get("matches", [])
+                if isinstance(match, dict)
+            ]
+            return compact_value({**value, "result": answer_result})
         if not isinstance(result, dict) or not result.get("ui_blocks"):
             return compact_value(value)
         answer_result = {key: item for key, item in result.items() if key not in {"matches", "ui_blocks"}}
@@ -602,4 +660,3 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
     graph.add_edge("execute_skill", "final_answer")
     graph.add_edge("final_answer", END)
     return graph.compile()
-

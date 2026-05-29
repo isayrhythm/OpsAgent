@@ -83,6 +83,7 @@ MUTANT_DATASETS = {
             "aa_change": "AA_Change",
             "mutant_sample": "Mut_Sample",
         },
+        purchase_url_template="https://www.elabcaas.cn/memd/public/index.html#/pages/search/geneid",
     ),
 }
 

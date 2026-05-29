@@ -117,6 +117,59 @@ def test_gene_mutant_query_queries_ath_abrc_by_direct_id(tmp_path, monkeypatch):
     assert result["matches"][0]["records"][0]["stock_number"] == "SALK_103838"
 
 
+def test_gene_mutant_query_returns_maize_memd_search_url(tmp_path, monkeypatch):
+    data_path = tmp_path / "maize_ems.parquet"
+    pd.DataFrame(
+        [
+            {
+                "GeneID": "Zm00001eb000010",
+                "Price": 500,
+                "Chr": "1",
+                "Loc": 100,
+                "Ref": "A",
+                "Mut": "G",
+                "Transcript": "Zm00001eb000010_T001",
+                "Effect": "NON_SYNONYMOUS_CODING",
+                "Codon_Change": "aGc/aCc",
+                "AA_Change": "S/T",
+                "Mut_Sample": "EMS-1",
+            }
+        ]
+    ).to_parquet(data_path, index=False)
+
+    monkeypatch.setattr(gene_mutant_query, "GENE_TRANS_PATHS", {"maize": tmp_path / "missing.json"})
+    monkeypatch.setattr(
+        gene_mutant_query,
+        "MUTANT_DATASETS",
+        {
+            "maize": gene_mutant_query.MutantDataset(
+                species="maize",
+                species_label="maize",
+                database="Maize EMS DB",
+                path=data_path,
+                gene_column="GeneID",
+                record_fields={
+                    "price": "Price",
+                    "gene_id": "GeneID",
+                    "chromosome": "Chr",
+                    "position": "Loc",
+                    "effect": "Effect",
+                    "mutant_sample": "Mut_Sample",
+                },
+                purchase_url_template="https://www.elabcaas.cn/memd/public/index.html#/pages/search/geneid",
+            )
+        },
+    )
+
+    result = gene_mutant_query.run_gene_mutant_query("Zm00001eb000010 的 EMS 突变体")
+
+    assert result["matches"][0]["database"] == "Maize EMS DB"
+    assert result["matches"][0]["purchase_url"] == (
+        "https://www.elabcaas.cn/memd/public/index.html#/pages/search/geneid"
+    )
+    assert result["matches"][0]["records"][0]["mutant_sample"] == "EMS-1"
+
+
 def test_gene_mutant_query_reports_species_with_mapping_but_no_database(tmp_path, monkeypatch):
     trans_path = tmp_path / "soy_gene_trans.json"
     trans_path.write_text(json.dumps({"glyma.01g000100": "Glyma.01G000100"}), encoding="utf-8")

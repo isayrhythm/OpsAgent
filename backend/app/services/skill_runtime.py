@@ -13,6 +13,7 @@ from backend.app.services.differential_transcriptomics import run_differential_t
 from backend.app.services.gene_function_research_path import run_gene_function_research_path_query
 from backend.app.services.gene_mutant_query import run_gene_mutant_query
 from backend.app.services.gene_phenotype_prediction import run_gene_phenotype_prediction
+from backend.app.services.primer_query import classify_primer_query, run_primer_query
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.services.trait2gene import classify_trait2gene_query, run_trait2gene_query
 
@@ -135,6 +136,15 @@ async def _run_gene_mutant_query(
     _context: SkillExecutionContext,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(run_gene_mutant_query, invocation.arguments["message"])
+
+
+async def _run_primer_query(
+    invocation: SkillInvocation,
+    context: SkillExecutionContext,
+) -> dict[str, Any]:
+    message = invocation.arguments["message"]
+    classification = await classify_primer_query(message, context.llm)
+    return await asyncio.to_thread(run_primer_query, message, classification)
 
 
 async def _run_trait2gene_query(
@@ -285,6 +295,11 @@ SKILL_EXECUTORS = {
         name="gene_mutant_query",
         mode="deterministic_query",
         run=_run_gene_mutant_query,
+    ),
+    "primer_query": SkillExecutorBinding(
+        name="primer_query",
+        mode="deterministic_query",
+        run=_run_primer_query,
     ),
     "trait2gene_query": SkillExecutorBinding(
         name="trait2gene_query",

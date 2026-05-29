@@ -11,9 +11,11 @@ dist/
 logs/
 *.log
 memory/artifacts/
+data/
 data/gene_info/
 data/GenePredictor/
 data/trait2gene/
+data/primers/
 data/23870-转录组分析代码/
 data/40430差异蛋白分析代码-1230/
 data/mutant_db/
@@ -23,3 +25,4 @@ data/mutant_db/
 pytest-cache-files-*/
 .pdm-python
 .pdm-build/
+/要补的功能.md
