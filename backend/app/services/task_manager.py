@@ -123,6 +123,7 @@ class TaskManager:
                     "answer": answer,
                     "web_sources": result.get("web_sources") or [],
                     "mode": "web_search" if state.web_search else ("skill" if result.get("skill_name") else "chat"),
+                    "usage": llm.usage_snapshot(),
                 },
             )
         except asyncio.CancelledError:

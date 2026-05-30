@@ -11,10 +11,29 @@ from backend.app.llm.settings import LLMSettings, get_llm_settings
 class DeepSeekClient:
     def __init__(self, settings: LLMSettings | None = None) -> None:
         self.settings = settings or get_llm_settings()
+        self._usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 0,
+        }
 
     @property
     def available(self) -> bool:
         return bool(self.settings.api_key)
+
+    def usage_snapshot(self) -> dict[str, int]:
+        return dict(self._usage)
+
+    def _record_usage(self, usage: Any) -> None:
+        if not isinstance(usage, dict):
+            return
+        for key in self._usage:
+            try:
+                self._usage[key] += int(usage.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
 
     async def chat(
         self,
@@ -47,6 +66,7 @@ class DeepSeekClient:
             )
             response.raise_for_status()
             body = response.json()
+        self._record_usage(body.get("usage"))
         return body["choices"][0]["message"]["content"]
 
     async def stream_chat(
@@ -66,6 +86,7 @@ class DeepSeekClient:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
+            "stream_options": {"include_usage": True},
             "thinking": {"type": "disabled"},
         }
         headers = {"Authorization": f"Bearer {self.settings.api_key}"}
@@ -85,6 +106,10 @@ class DeepSeekClient:
                     if not data or data == "[DONE]":
                         continue
                     chunk = json.loads(data)
-                    delta = chunk["choices"][0].get("delta", {}).get("content")
+                    self._record_usage(chunk.get("usage"))
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {}).get("content")
                     if delta:
                         yield delta

@@ -199,6 +199,25 @@ function estimateUsage(input, history, output = "") {
   });
 }
 
+function usageFromApi(usage, cumulativeBase = 0) {
+  if (!usage || typeof usage !== "object") {
+    return null;
+  }
+  const input = Number(usage.prompt_tokens || 0);
+  const output = Number(usage.completion_tokens || 0);
+  const total = Number(usage.total_tokens || 0);
+  if (!input && !output && !total) {
+    return null;
+  }
+  return normalizeUsage({
+    input,
+    history: 0,
+    internal: Math.max(0, total - input - output),
+    output,
+    cumulativeBase,
+  });
+}
+
 function previousUsageTotal(session) {
   return (session?.messages || []).reduce((total, message) => {
     if (message.role !== "agent" || !message.usage) {
@@ -213,7 +232,7 @@ function usageLabel(usage) {
     return "";
   }
   const normalized = normalizeUsage(usage);
-  return `本轮 ${normalized.total} / 累计 ${normalized.cumulative} tokens`;
+  return `Turn ${normalized.total} / Total ${normalized.cumulative} tokens`;
 }
 
 function sourceMapFromSources(sources = []) {
@@ -1026,13 +1045,16 @@ function App() {
       }
       updateMessage(sessionId, messageId, (messageItem) => {
         const content = messageItem.content || answer;
+        const usage =
+          usageFromApi(payload.data?.usage, messageItem.usage?.cumulativeBase) ||
+          normalizeUsage({...messageItem.usage, output: textSize(content)});
         return {
           ...messageItem,
           content,
           webSources: payload.data?.web_sources || sourceCacheRef.current.get(messageId) || messageItem.webSources || [],
           status: null,
           streaming: false,
-          usage: normalizeUsage({...messageItem.usage, output: textSize(content)}),
+          usage,
         };
       });
     });
@@ -1632,9 +1654,32 @@ function CopyButton({text}) {
   }
 
   return (
-    <button className="copy-button" type="button" onClick={copy}>
-      {copied ? "已复制" : "复制"}
+    <button
+      className={`copy-button ${copied ? "copied" : ""}`}
+      type="button"
+      onClick={copy}
+      aria-label={copied ? "Copied" : "Copy"}
+      title={copied ? "Copied" : "Copy"}
+    >
+      {copied ? <CopiedIcon /> : <CopyIcon />}
     </button>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="8" y="8" width="11" height="11" rx="2" />
+      <path d="M5 15V7a2 2 0 0 1 2-2h8" />
+    </svg>
+  );
+}
+
+function CopiedIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m6.5 12.5 3.5 3.5 7.5-8" />
+    </svg>
   );
 }
 
