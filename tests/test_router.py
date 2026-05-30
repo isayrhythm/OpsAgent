@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary
-from backend.app.services.router import route_skill
+from backend.app.services.router import _compact_sequence_text, route_skill
 from backend.app.services.skill_loader import SkillSpec
 
 
@@ -152,3 +152,12 @@ def test_router_includes_recent_focus_for_short_followup() -> None:
     assert "recent_focus" in payload
     assert "LOC_Os07g48050" in payload
     assert "执行器未注册" in payload
+
+
+def test_router_compacts_long_biological_sequences_before_llm_routing() -> None:
+    sequence = "ACGT" * 30
+
+    compacted = _compact_sequence_text(f"BLAST this sequence:\n{sequence}")
+
+    assert sequence not in compacted
+    assert "[sequence omitted: 120 residues]" in compacted

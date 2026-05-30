@@ -466,6 +466,62 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 if isinstance(match, dict)
             ]
             return compact_value({**value, "result": answer_result})
+        if isinstance(result, dict) and result.get("analysis") == "blast_query":
+            answer_result = {
+                key: item
+                for key, item in result.items()
+                if key
+                in {
+                    "status",
+                    "analysis",
+                    "query",
+                    "classification",
+                    "sequence_count",
+                    "species_searched",
+                    "gene_info_enrichment",
+                    "not_found",
+                    "errors",
+                }
+            }
+            answer_result["answer_requirements"] = [
+                "Group the BLAST results by query_label and present candidate homologous records in concise tables.",
+                "Include subject_id, species, record_type, program, identity, query_coverage, evalue, and bitscore.",
+                "For each hit, include the resolved canonical gene ID and compact local gene function summary when gene_info.matched is true.",
+                "If gene_info.matched is false, state that no local functional annotation was resolved for that hit. Do not invent a function.",
+                "A nucleotide database hit is usually a candidate gene record. A protein database hit may be a transcript or protein record. Do not claim that every subject_id is a standard gene ID.",
+                "Mention queries with no passing hit and any execution errors. Do not invent annotations that were not returned by the tool.",
+            ]
+            answer_result["matches"] = [
+                {
+                    "query_label": match.get("query_label"),
+                    "query_type": match.get("query_type"),
+                    "query_length": match.get("query_length"),
+                    "source": match.get("source"),
+                    "total_hits": match.get("total_hits"),
+                    "returned_hits": match.get("returned_hits"),
+                    "hits": [
+                        {
+                            "rank": hit.get("rank"),
+                            "subject_id": hit.get("subject_id"),
+                            "species": hit.get("species"),
+                            "species_label": hit.get("species_label"),
+                            "record_type": hit.get("record_type"),
+                            "program": hit.get("program"),
+                            "identity": hit.get("identity"),
+                            "query_coverage": hit.get("query_coverage"),
+                            "subject_coverage": hit.get("subject_coverage"),
+                            "evalue": hit.get("best_evalue"),
+                            "bitscore": hit.get("best_bitscore"),
+                            "gene_info": hit.get("gene_info"),
+                        }
+                        for hit in (match.get("hits") or [])[:10]
+                        if isinstance(hit, dict)
+                    ],
+                }
+                for match in result.get("matches", [])
+                if isinstance(match, dict)
+            ]
+            return compact_value({**value, "result": answer_result})
         if not isinstance(result, dict) or not result.get("ui_blocks"):
             return compact_value(value)
         answer_result = {key: item for key, item in result.items() if key not in {"matches", "ui_blocks"}}

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
+from backend.app.services.blast_query import classify_blast_query, run_blast_query
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.differential_arguments import resolve_differential_arguments
 from backend.app.services.differential_protein import run_differential_protein_analysis
@@ -145,6 +146,15 @@ async def _run_primer_query(
     message = invocation.arguments["message"]
     classification = await classify_primer_query(message, context.llm)
     return await asyncio.to_thread(run_primer_query, message, classification)
+
+
+async def _run_blast_query(
+    invocation: SkillInvocation,
+    context: SkillExecutionContext,
+) -> dict[str, Any]:
+    message = invocation.arguments["message"]
+    classification = await classify_blast_query(message, context.llm)
+    return await asyncio.to_thread(run_blast_query, message, classification, context.attachments)
 
 
 async def _run_trait2gene_query(
@@ -300,6 +310,11 @@ SKILL_EXECUTORS = {
         name="primer_query",
         mode="deterministic_query",
         run=_run_primer_query,
+    ),
+    "blast_query": SkillExecutorBinding(
+        name="blast_query",
+        mode="deterministic_query",
+        run=_run_blast_query,
     ),
     "trait2gene_query": SkillExecutorBinding(
         name="trait2gene_query",

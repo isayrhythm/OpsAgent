@@ -187,3 +187,28 @@ def test_pdf_intake_reports_unextractable_pdf(tmp_path) -> None:
     assert intake["status"] == "failed"
     assert intake["data_type"] == "pdf_document"
     assert "PDF" in intake["reason"]
+
+
+def test_fasta_intake_profiles_multiple_sequences_for_blast(tmp_path) -> None:
+    source = tmp_path / "queries.fasta"
+    source.write_text(
+        ">rice-dna\nACGTACGTACGTACGTACGT\n>protein-a\nMKTIIALSYIFCLVFADYKDDDDK\n",
+        encoding="utf-8",
+    )
+    attachment = UploadedFileSummary(
+        file_id="fasta",
+        filename=source.name,
+        content_type="text/plain",
+        size=source.stat().st_size,
+        path=str(source),
+    )
+
+    intake = intake_uploaded_file(attachment)
+
+    assert intake["status"] == "ready"
+    assert intake["data_family"] == "sequence"
+    assert intake["data_type"] == "fasta_sequences"
+    assert intake["recommended_skills"] == ["blast_query"]
+    assert intake["capabilities"] == ["blast_query"]
+    assert intake["sequence_count"] == 2
+    assert [item["label"] for item in intake["sequences_preview"]] == ["rice-dna", "protein-a"]

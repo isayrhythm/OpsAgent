@@ -10,6 +10,10 @@ from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 
 
+SEQUENCE_SYMBOLS = set("ACGTUNRYKMSWBDHVACDEFGHIKLMNPQRSTVWYBXZJUO*")
+LONG_SEQUENCE_RE = re.compile(r"[A-Za-z*]{80,}")
+
+
 @dataclass(frozen=True)
 class RouteDecision:
     skill: SkillSpec | None
@@ -42,7 +46,7 @@ def _dedupe_skills(skills: list[SkillSpec]) -> list[SkillSpec]:
 def _recent_focus(history: list[ChatHistoryMessage]) -> dict[str, str]:
     focus = {"last_user_message": "", "last_assistant_message": ""}
     for item in reversed(history):
-        content = str(item.content or "").strip()
+        content = _compact_sequence_text(str(item.content or "").strip())
         if not content:
             continue
         if item.role == "user" and not focus["last_user_message"]:
@@ -52,6 +56,26 @@ def _recent_focus(history: list[ChatHistoryMessage]) -> dict[str, str]:
         if focus["last_user_message"] and focus["last_assistant_message"]:
             break
     return focus
+
+
+def _compact_sequence_text(text: str) -> str:
+    compacted_lines = []
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        sequence = re.sub(r"\s+", "", stripped)
+        if len(sequence) >= 20 and set(sequence.upper()) <= SEQUENCE_SYMBOLS:
+            compacted_lines.append(f"[sequence omitted: {len(sequence)} residues]")
+        else:
+            compacted_lines.append(line)
+    compacted = "\n".join(compacted_lines)
+
+    def replace_inline(match: re.Match[str]) -> str:
+        value = match.group(0)
+        if set(value.upper()) <= SEQUENCE_SYMBOLS:
+            return f"[sequence omitted: {len(value)} residues]"
+        return value
+
+    return LONG_SEQUENCE_RE.sub(replace_inline, compacted)
 
 
 async def route_skill(
@@ -88,10 +112,10 @@ async def route_skill(
                 "role": "user",
                 "content": json.dumps(
                     {
-                        "current_message": message,
+                        "current_message": _compact_sequence_text(message),
                         "recent_focus": _recent_focus(history),
                         "history": [
-                            {"role": item.role, "content": item.content}
+                            {"role": item.role, "content": _compact_sequence_text(item.content)}
                             for item in history[-8:]
                         ],
                         "data_profiles": data_profiles or [],

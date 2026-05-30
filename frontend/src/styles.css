@@ -500,6 +500,7 @@ button {
 }
 
 .message-stack {
+  min-width: 0;
   max-width: min(720px, calc(100% - 46px));
 }
 
@@ -508,6 +509,7 @@ button {
 }
 
 .bubble {
+  min-width: 0;
   border: 1px solid rgba(222, 215, 202, 0.72);
   border-radius: 22px;
   background: rgba(255, 253, 248, 0.88);
@@ -532,6 +534,8 @@ button {
 .bubble p {
   margin: 0;
   line-height: 1.75;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .message-meta {
@@ -773,6 +777,8 @@ button {
 
 .markdown-body {
   line-height: 1.75;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .markdown-body a {

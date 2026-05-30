@@ -10,10 +10,18 @@ import pandas as pd
 from pypdf import PdfReader
 
 from backend.app.schemas import UploadedFileSummary
+from backend.app.services.blast_query import (
+    FASTA_SUFFIXES,
+    MAX_QUERY_SEQUENCES,
+    detect_sequence_type,
+    normalize_sequence,
+    parse_fasta_text,
+)
 
 
 SUPPORTED_TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm"}
 SUPPORTED_PDF_SUFFIXES = {".pdf"}
+SUPPORTED_FASTA_SUFFIXES = FASTA_SUFFIXES
 DEFAULT_MAX_INTAKE_ATTEMPTS = 3
 INTAKE_VERSION = 4
 PDF_TEXT_EXCERPT_CHARS = 12000
@@ -44,6 +52,8 @@ def intake_uploaded_file(
     path = Path(item.path)
     if path.suffix.lower() in SUPPORTED_PDF_SUFFIXES:
         return intake_pdf_file(item, path)
+    if path.suffix.lower() in SUPPORTED_FASTA_SUFFIXES:
+        return intake_fasta_file(item, path)
     if path.suffix.lower() not in SUPPORTED_TABLE_SUFFIXES:
         return {
             "status": "skipped",
@@ -51,7 +61,7 @@ def intake_uploaded_file(
             "data_type": "unsupported_file",
             "confidence": "unconfirmed",
             "analysis_ready": False,
-            "reason": "当前 intake 只处理 CSV/TSV/TXT/XLSX 表格和 PDF 文献。",
+            "reason": "当前 intake 只处理 CSV/TSV/TXT/XLSX 表格、PDF 文献和 FASTA 序列。",
             "warnings": [],
             "capabilities": [],
         }
@@ -137,6 +147,8 @@ def profile_uploaded_files(attachments: list[UploadedFileSummary]) -> list[dict[
         suffix = path.suffix.lower()
         if suffix in SUPPORTED_PDF_SUFFIXES:
             profiles.append(prompt_profile(item, intake_pdf_file(item, path)))
+        elif suffix in SUPPORTED_FASTA_SUFFIXES:
+            profiles.append(prompt_profile(item, intake_fasta_file(item, path)))
         elif suffix in SUPPORTED_TABLE_SUFFIXES:
             profiles.append(prompt_profile(item, _profile_file(item, path)))
     return profiles
@@ -169,8 +181,55 @@ def prompt_profile(item: UploadedFileSummary, intake: dict[str, Any]) -> dict[st
         "title": intake.get("title"),
         "text_excerpt": intake.get("text_excerpt"),
         "text_file": intake.get("text_file"),
+        "sequence_count": intake.get("sequence_count"),
+        "sequences_preview": intake.get("sequences_preview", []),
     }
     return {key: value for key, value in profile.items() if value not in (None, "", [], {})}
+
+
+def intake_fasta_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
+    profile = {
+        "file_id": item.file_id,
+        "filename": item.filename,
+        "source_path": str(path),
+        "intake_version": INTAKE_VERSION,
+        "status": "failed",
+        "data_family": "sequence",
+        "data_type": "fasta_sequences",
+        "confidence": "unconfirmed",
+        "analysis_ready": False,
+        "recommended_skills": [],
+        "capabilities": [],
+        "warnings": [],
+        "reason": "",
+    }
+    try:
+        records = parse_fasta_text(path.read_text(encoding="utf-8-sig"), source=item.filename)
+    except Exception as exc:
+        return {**profile, "reason": f"FASTA 解析失败：{exc}"}
+    if not records:
+        return {**profile, "reason": "FASTA 文件中没有识别到带 > 标签的序列。"}
+    if len(records) > MAX_QUERY_SEQUENCES:
+        return {**profile, "reason": f"FASTA 最多支持 {MAX_QUERY_SEQUENCES} 条序列，当前文件包含 {len(records)} 条。"}
+
+    previews = []
+    for label, raw_sequence, _source in records:
+        sequence = normalize_sequence(raw_sequence)
+        sequence_type = detect_sequence_type(sequence)
+        if sequence_type == "UNKNOWN":
+            return {**profile, "reason": f"序列 {label} 含有不支持的字符，或无法判断 DNA/RNA/蛋白质类型。"}
+        previews.append({"label": label, "sequence_type": sequence_type, "length": len(sequence)})
+
+    return {
+        **profile,
+        "status": "ready",
+        "confidence": "high",
+        "sequence_count": len(previews),
+        "sequences_preview": previews,
+        "recommended_skills": ["blast_query"],
+        "capabilities": ["blast_query"],
+        "reason": f"已识别 {len(previews)} 条 FASTA 序列，可用于本地 BLAST 比对。",
+    }
 
 
 def intake_pdf_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
@@ -467,6 +526,9 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
         if intake.get("data_type") == "pdf_document":
             sections.append(_uploaded_pdf_prompt(item, intake))
             continue
+        if intake.get("data_type") == "fasta_sequences":
+            sections.append(_uploaded_fasta_prompt(item, intake))
+            continue
         groups = intake.get("sample_groups") or {}
         group_text = ", ".join(f"{group}({len(samples)})" for group, samples in groups.items()) or "未识别"
         columns = ", ".join(str(column) for column in (intake.get("columns_preview") or [])[:12]) or "未识别"
@@ -520,6 +582,28 @@ def _uploaded_pdf_prompt(item: UploadedFileSummary, intake: dict[str, Any]) -> s
             f"  全文文本位置：{intake.get('text_file', 'not_ready')}",
             "  PDF 文本摘录：",
             excerpt,
+        ]
+    )
+
+
+def _uploaded_fasta_prompt(item: UploadedFileSummary, intake: dict[str, Any]) -> str:
+    previews = intake.get("sequences_preview") or []
+    preview_text = ", ".join(
+        f"{entry.get('label', 'query')}({entry.get('sequence_type', 'unknown')}, {entry.get('length', '?')})"
+        for entry in previews[:MAX_QUERY_SEQUENCES]
+        if isinstance(entry, dict)
+    ) or "未识别"
+    return "\n".join(
+        [
+            f"- 文件名：{item.filename}",
+            f"  文件位置：{item.path or 'unknown'}",
+            f"  文件大小：{item.size} bytes",
+            "  数据识别：sequence/fasta_sequences",
+            f"  intake 状态：{intake.get('status', 'not_processed')}",
+            f"  解析结果：{intake.get('reason', '')}",
+            f"  序列数量：{intake.get('sequence_count', 0)}",
+            f"  序列预览：{preview_text}",
+            "  可用于：blast_query",
         ]
     )
 
