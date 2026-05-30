@@ -1,7 +1,30 @@
 from pathlib import Path
 
 from backend.app.schemas import UploadedFileSummary
-from backend.app.services.data_intake import intake_uploaded_file, profile_uploaded_files
+from backend.app.services.data_intake import intake_uploaded_file, pdf_context_for_history, profile_uploaded_files
+
+
+def write_text_pdf(path: Path, text: str) -> None:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    objects = [
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+        b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        b"5 0 obj\n<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream\nendobj\n",
+    ]
+    content = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(content))
+        content.extend(obj)
+    xref = len(content)
+    content.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
+    for offset in offsets[1:]:
+        content.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    content.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii"))
+    path.write_bytes(content)
 
 
 def test_profiles_proteomics_expression_matrix_fixture() -> None:
@@ -121,3 +144,46 @@ def test_trait_rank_table_stays_low_confidence_without_analysis_skill(tmp_path) 
     assert intake["capabilities"] == []
     assert "standard_files" not in intake
     assert any("性状" in warning or "复样" in warning for warning in intake["warnings"])
+
+
+def test_pdf_intake_extracts_text_and_context(tmp_path) -> None:
+    source = tmp_path / "paper.pdf"
+    write_text_pdf(source, "Arabidopsis HY2 regulates photomorphogenesis and seedling development.")
+    attachment = UploadedFileSummary(
+        file_id="paper",
+        filename=source.name,
+        content_type="application/pdf",
+        size=source.stat().st_size,
+        path=str(source),
+    )
+
+    intake = intake_uploaded_file(attachment)
+    ready_attachment = attachment.model_copy(update={"intake": intake})
+    context = pdf_context_for_history([ready_attachment])
+
+    assert intake["status"] == "ready"
+    assert intake["data_family"] == "literature"
+    assert intake["data_type"] == "pdf_document"
+    assert intake["capabilities"] == ["pdf_literature_context"]
+    assert Path(intake["text_file"]).is_file()
+    assert "HY2 regulates photomorphogenesis" in intake["text_excerpt"]
+    assert "PDF 文献上下文" in context
+    assert "paper.pdf" in context
+
+
+def test_pdf_intake_reports_unextractable_pdf(tmp_path) -> None:
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(b"%PDF-1.4\nnot a readable pdf")
+    attachment = UploadedFileSummary(
+        file_id="scan",
+        filename=source.name,
+        content_type="application/pdf",
+        size=source.stat().st_size,
+        path=str(source),
+    )
+
+    intake = intake_uploaded_file(attachment)
+
+    assert intake["status"] == "failed"
+    assert intake["data_type"] == "pdf_document"
+    assert "PDF" in intake["reason"]

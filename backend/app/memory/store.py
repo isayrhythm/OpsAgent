@@ -11,6 +11,7 @@ from typing import BinaryIO
 
 from backend.app.config import MEMORY_DIR
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
+from backend.app.services.data_intake import pdf_context_for_history
 
 
 def _safe_segment(value: str) -> str:
@@ -87,9 +88,15 @@ class MemoryStore:
         payload["updated_at"] = _now()
         if attachments:
             payload["uploaded_files"] = [item.model_dump(mode="json") for item in attachments]
+        stored_user_message = user_message
+        if attachments:
+            pdf_context = pdf_context_for_history(attachments)
+            if pdf_context:
+                stored_user_message = f"{user_message}\n\n{pdf_context}"
+
         payload.setdefault("messages", []).extend(
             [
-                {"role": "user", "content": user_message, "created_at": _now()},
+                {"role": "user", "content": stored_user_message, "created_at": _now()},
                 {"role": "assistant", "content": answer, "created_at": _now()},
             ]
         )

@@ -97,6 +97,7 @@ function normalizeSession(session) {
             id: message.id || crypto.randomUUID(),
             role: message.role === "assistant" ? "agent" : message.role,
             content: String(message.content || ""),
+            contextContent: String(message.contextContent || message.content || ""),
             createdAt: Number(message.createdAt || Date.now()),
             usage: message.usage,
             uiBlocks: Array.isArray(message.uiBlocks) ? message.uiBlocks : [],
@@ -350,6 +351,40 @@ function normalizeMarkdown(content) {
         );
     })
     .join("");
+}
+
+function isPdfAttachment(file) {
+  const filename = String(file?.filename || "").toLowerCase();
+  const contentType = String(file?.content_type || file?.contentType || "").toLowerCase();
+  return filename.endsWith(".pdf") || contentType.includes("pdf") || file?.intake?.data_type === "pdf_document";
+}
+
+function pdfContextForHistory(files = []) {
+  const sections = files
+    .filter(isPdfAttachment)
+    .map((file) => {
+      const intake = file.intake || {};
+      if (intake.status !== "ready") {
+        return [
+          `[PDF attachment: ${file.filename}]`,
+          `status: ${intake.status || "unknown"}`,
+          `reason: ${intake.reason || "PDF text extraction failed"}`,
+        ].join("\n");
+      }
+      return [
+        `[PDF attachment: ${file.filename}]`,
+        `path: ${file.path || intake.source_path || ""}`,
+        `title: ${intake.title || ""}`,
+        `pages: ${intake.parsed_pages || "?"}/${intake.page_count || "?"}`,
+        `text_file: ${intake.text_file || ""}`,
+        "text_excerpt:",
+        String(intake.text_excerpt || ""),
+      ].join("\n");
+    });
+  if (!sections.length) {
+    return "";
+  }
+  return `PDF 文献上下文（由上传文件解析得到，后续回答可引用；不要编造未出现的信息）：\n${sections.join("\n\n")}`;
 }
 
 function renderMarkdown(content, apiBase, sources) {
@@ -861,10 +896,18 @@ function App() {
       .slice(-20)
       .map((item) => ({
         role: item.role === "agent" ? "assistant" : item.role,
-        content: item.content,
+        content: item.contextContent || item.content,
       }));
     const usage = normalizeUsage(estimateUsage(text, history), previousUsageTotal(session));
-    const userMessage = {id: crypto.randomUUID(), role: "user", content: text, createdAt: Date.now()};
+    const requestAttachments = session.attachments || [];
+    const pdfContext = pdfContextForHistory(requestAttachments);
+    const userMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      contextContent: pdfContext ? `${text}\n\n${pdfContext}` : text,
+      createdAt: Date.now(),
+    };
     const assistantMessage = {
       id: crypto.randomUUID(),
       role: "agent",
@@ -879,6 +922,7 @@ function App() {
     patchSession(session.id, (item) => ({
       ...item,
       messages: [...item.messages, userMessage, assistantMessage],
+      attachments: (item.attachments || []).filter((file) => !isPdfAttachment(file)),
     }));
     setInput("");
     setSubmitting(true);
@@ -892,7 +936,7 @@ function App() {
           user_id: userId,
           session_id: session.id,
           history,
-          attachments: session.attachments || [],
+          attachments: requestAttachments,
           detached_files: session.detachedFiles || [],
           web_search: webSearchEnabled,
         }),

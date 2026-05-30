@@ -7,13 +7,18 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from pypdf import PdfReader
 
 from backend.app.schemas import UploadedFileSummary
 
 
 SUPPORTED_TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm"}
+SUPPORTED_PDF_SUFFIXES = {".pdf"}
 DEFAULT_MAX_INTAKE_ATTEMPTS = 3
 INTAKE_VERSION = 4
+PDF_TEXT_EXCERPT_CHARS = 12000
+PDF_FULL_TEXT_CHARS = 80000
+PDF_MAX_PAGES = 80
 
 
 def ensure_attachment_intakes(attachments: list[UploadedFileSummary]) -> list[UploadedFileSummary]:
@@ -37,6 +42,8 @@ def intake_uploaded_file(
     if not item.path:
         return _failed_intake(item, "上传文件缺少保存路径。")
     path = Path(item.path)
+    if path.suffix.lower() in SUPPORTED_PDF_SUFFIXES:
+        return intake_pdf_file(item, path)
     if path.suffix.lower() not in SUPPORTED_TABLE_SUFFIXES:
         return {
             "status": "skipped",
@@ -44,7 +51,7 @@ def intake_uploaded_file(
             "data_type": "unsupported_file",
             "confidence": "unconfirmed",
             "analysis_ready": False,
-            "reason": "当前 intake 只处理 CSV/TSV/TXT/XLSX 表格。",
+            "reason": "当前 intake 只处理 CSV/TSV/TXT/XLSX 表格和 PDF 文献。",
             "warnings": [],
             "capabilities": [],
         }
@@ -124,8 +131,14 @@ def profile_uploaded_files(attachments: list[UploadedFileSummary]) -> list[dict[
         if item.intake:
             profiles.append(prompt_profile(item, item.intake))
             continue
-        if item.path and Path(item.path).suffix.lower() in SUPPORTED_TABLE_SUFFIXES:
-            profiles.append(prompt_profile(item, _profile_file(item, Path(item.path))))
+        if not item.path:
+            continue
+        path = Path(item.path)
+        suffix = path.suffix.lower()
+        if suffix in SUPPORTED_PDF_SUFFIXES:
+            profiles.append(prompt_profile(item, intake_pdf_file(item, path)))
+        elif suffix in SUPPORTED_TABLE_SUFFIXES:
+            profiles.append(prompt_profile(item, _profile_file(item, path)))
     return profiles
 
 
@@ -150,8 +163,150 @@ def prompt_profile(item: UploadedFileSummary, intake: dict[str, Any]) -> dict[st
         "recommended_skills": intake.get("recommended_skills", []),
         "capabilities": intake.get("capabilities", []),
         "standard_files": intake.get("standard_files", {}),
+        "page_count": intake.get("page_count"),
+        "parsed_pages": intake.get("parsed_pages"),
+        "text_length": intake.get("text_length"),
+        "title": intake.get("title"),
+        "text_excerpt": intake.get("text_excerpt"),
+        "text_file": intake.get("text_file"),
     }
     return {key: value for key, value in profile.items() if value not in (None, "", [], {})}
+
+
+def intake_pdf_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
+    profile = {
+        "file_id": item.file_id,
+        "filename": item.filename,
+        "source_path": str(path),
+        "intake_version": INTAKE_VERSION,
+        "status": "failed",
+        "data_family": "literature",
+        "data_type": "pdf_document",
+        "confidence": "unconfirmed",
+        "analysis_ready": False,
+        "recommended_skills": [],
+        "capabilities": [],
+        "warnings": [],
+        "reason": "",
+    }
+    try:
+        reader = PdfReader(str(path))
+        if reader.is_encrypted:
+            try:
+                reader.decrypt("")
+            except Exception:
+                pass
+            if reader.is_encrypted:
+                return {
+                    **profile,
+                    "reason": "PDF 已加密，无法提取文本。",
+                    "warnings": ["encrypted_pdf"],
+                }
+
+        page_count = len(reader.pages)
+        page_texts = []
+        warnings = []
+        for page_index, page in enumerate(reader.pages[:PDF_MAX_PAGES], start=1):
+            try:
+                text = page.extract_text() or ""
+            except Exception as exc:
+                warnings.append(f"page_{page_index}_extract_failed: {exc}")
+                text = ""
+            text = _normalize_pdf_text(text)
+            if text:
+                page_texts.append(text)
+
+        full_text = _normalize_pdf_text("\n\n".join(page_texts))
+        if not full_text:
+            return {
+                **profile,
+                "page_count": page_count,
+                "parsed_pages": min(page_count, PDF_MAX_PAGES),
+                "reason": "PDF 未提取到可用文本，可能是扫描版、图片型 PDF、加密文档或文本编码不可解析。",
+                "warnings": warnings or ["no_extractable_text"],
+            }
+
+        if page_count > PDF_MAX_PAGES:
+            warnings.append(f"only_first_{PDF_MAX_PAGES}_pages_parsed")
+
+        intake_dir = path.parent / f"{item.file_id}_pdf_intake"
+        intake_dir.mkdir(parents=True, exist_ok=True)
+        text_file = intake_dir / "extracted_text.txt"
+        text_file.write_text(full_text[:PDF_FULL_TEXT_CHARS], encoding="utf-8")
+
+        title = _pdf_metadata_text(getattr(reader, "metadata", None), "/Title")
+        return {
+            **profile,
+            "status": "ready",
+            "confidence": "high",
+            "page_count": page_count,
+            "parsed_pages": min(page_count, PDF_MAX_PAGES),
+            "text_length": len(full_text),
+            "title": title,
+            "text_excerpt": full_text[:PDF_TEXT_EXCERPT_CHARS],
+            "text_file": str(text_file),
+            "capabilities": ["pdf_literature_context"],
+            "warnings": warnings,
+            "reason": f"已提取 PDF 文本：{min(page_count, PDF_MAX_PAGES)}/{page_count} 页，约 {len(full_text)} 字符。",
+        }
+    except Exception as exc:
+        return {
+            **profile,
+            "reason": f"PDF 解析失败：{exc}",
+            "warnings": ["pdf_parse_failed"],
+        }
+
+
+def pdf_context_for_history(attachments: list[UploadedFileSummary]) -> str:
+    sections = []
+    for item in attachments:
+        intake = item.intake or {}
+        if intake.get("data_type") != "pdf_document":
+            continue
+        if intake.get("status") != "ready":
+            sections.append(
+                "\n".join(
+                    [
+                        f"[PDF attachment: {item.filename}]",
+                        f"status: {intake.get('status', 'unknown')}",
+                        f"reason: {intake.get('reason', '')}",
+                    ]
+                )
+            )
+            continue
+        sections.append(
+            "\n".join(
+                [
+                    f"[PDF attachment: {item.filename}]",
+                    f"path: {item.path or intake.get('source_path', '')}",
+                    f"title: {intake.get('title') or ''}",
+                    f"pages: {intake.get('parsed_pages', '?')}/{intake.get('page_count', '?')}",
+                    f"text_file: {intake.get('text_file', '')}",
+                    "text_excerpt:",
+                    str(intake.get("text_excerpt") or ""),
+                ]
+            )
+        )
+    if not sections:
+        return ""
+    return "PDF 文献上下文（由上传文件解析得到，后续回答可引用；不要编造未出现的信息）：\n" + "\n\n".join(sections)
+
+
+def _normalize_pdf_text(text: str) -> str:
+    text = text.replace("\x00", " ")
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _pdf_metadata_text(metadata: Any, key: str) -> str:
+    if not metadata:
+        return ""
+    try:
+        value = metadata.get(key)
+    except Exception:
+        value = None
+    return str(value or "").strip()
 
 
 def read_table(path: Path) -> pd.DataFrame:
@@ -309,6 +464,9 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
     sections = ["当前会话已上传文件。以下是 intake 后的短摘要，不包含原始文件内容："]
     for item in attachments:
         intake = item.intake or {}
+        if intake.get("data_type") == "pdf_document":
+            sections.append(_uploaded_pdf_prompt(item, intake))
+            continue
         groups = intake.get("sample_groups") or {}
         group_text = ", ".join(f"{group}({len(samples)})" for group, samples in groups.items()) or "未识别"
         columns = ", ".join(str(column) for column in (intake.get("columns_preview") or [])[:12]) or "未识别"
@@ -334,6 +492,36 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
             )
         )
     return "\n".join(sections)
+
+
+def _uploaded_pdf_prompt(item: UploadedFileSummary, intake: dict[str, Any]) -> str:
+    if intake.get("status") != "ready":
+        return "\n".join(
+            [
+                f"- 文件名：{item.filename}",
+                f"  文件位置：{item.path or 'unknown'}",
+                f"  文件大小：{item.size} bytes",
+                f"  intake 状态：{intake.get('status', 'not_processed')}",
+                "  数据识别：literature/pdf_document",
+                f"  解析结果：{intake.get('reason', 'PDF 文本解析失败')}",
+            ]
+        )
+    excerpt = str(intake.get("text_excerpt") or "")
+    return "\n".join(
+        [
+            f"- 文件名：{item.filename}",
+            f"  文件位置：{item.path or 'unknown'}",
+            f"  文件大小：{item.size} bytes",
+            "  数据识别：literature/pdf_document",
+            f"  intake 状态：{intake.get('status', 'ready')}",
+            f"  标题：{intake.get('title') or 'unknown'}",
+            f"  页数：{intake.get('parsed_pages', 'unknown')}/{intake.get('page_count', 'unknown')}",
+            f"  提取文本长度：{intake.get('text_length', 'unknown')}",
+            f"  全文文本位置：{intake.get('text_file', 'not_ready')}",
+            "  PDF 文本摘录：",
+            excerpt,
+        ]
+    )
 
 
 def build_standard_matrix(frame: pd.DataFrame, sample_columns: list[str], data_family: str) -> pd.DataFrame:
