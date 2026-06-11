@@ -10,6 +10,7 @@ import textwrap
 from typing import Any, Awaitable, Callable
 
 from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
+from backend.app.llm.calls import complete_text
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
@@ -154,17 +155,20 @@ async def generate_skill_code(
             ),
         },
     ]
-    response = ""
     status_text = f"正在重新调用 {skill.name}" if is_retry else f"正在调用 {skill.name}"
-    async for delta in llm.stream_chat(
+
+    async def emit_delta(delta: str) -> None:
+        if emit is not None:
+            await emit("thinking_delta", 5, status_text, {"delta": delta, "delta_length": len(delta)})
+
+    response = await complete_text(
+        llm,
         messages,
         model=llm.settings.code_model,
         temperature=0,
         max_tokens=2000,
-    ):
-        response += delta
-        if emit is not None:
-            await emit("thinking_delta", 5, status_text, {"delta": delta, "delta_length": len(delta)})
+        emit_delta=emit_delta,
+    )
     return _strip_code_fence(response)
 
 

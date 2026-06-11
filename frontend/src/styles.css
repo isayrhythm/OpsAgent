@@ -845,6 +845,131 @@ button {
   margin-top: 18px;
 }
 
+.research-plan {
+  display: grid;
+  gap: 9px;
+  margin: 0 0 14px;
+  border: 1px solid rgba(222, 215, 202, 0.82);
+  border-radius: 14px;
+  background: rgba(247, 242, 232, 0.66);
+  padding: 12px;
+}
+
+.thinking-pill + .research-plan {
+  margin-top: 10px;
+}
+
+.research-plan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.research-plan-head span {
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.research-plan-head small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.research-plan-summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.research-plan-list {
+  display: grid;
+  gap: 8px;
+}
+
+.research-plan-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.research-plan-box {
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.45;
+}
+
+.research-plan-item.completed .research-plan-box {
+  color: var(--accent-strong);
+}
+
+.research-plan-body {
+  min-width: 0;
+}
+
+.research-plan-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.research-plan-title strong {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.research-plan-title em {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.research-plan-item.running .research-plan-title em {
+  color: #7a5b22;
+}
+
+.research-plan-item.completed .research-plan-title em {
+  color: var(--accent-strong);
+}
+
+.research-plan-item.failed .research-plan-title em {
+  color: var(--danger);
+}
+
+.research-plan-body p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.research-plan-tools {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+  margin-top: 3px;
+}
+
+.research-plan-tools span {
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 750;
+}
+
 .research-path {
   overflow: hidden;
   border: 1px solid rgba(31, 93, 80, 0.18);

@@ -9,6 +9,7 @@ from typing import Any
 import pyarrow.dataset as ds
 
 from backend.app.config import DATA_DIR
+from backend.app.llm.calls import chat_json
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.id_mapping import with_id_mapping_summary
 
@@ -80,7 +81,8 @@ async def classify_primer_query(message: str, llm: DeepSeekClient) -> dict[str, 
     if not getattr(llm, "available", False):
         return _fallback_classification(message)
 
-    response = await llm.chat(
+    response = await chat_json(
+        llm,
         [
             {
                 "role": "system",
@@ -116,9 +118,8 @@ async def classify_primer_query(message: str, llm: DeepSeekClient) -> dict[str, 
         model=getattr(getattr(llm, "settings", None), "router_model", None),
         temperature=0,
         max_tokens=CLASSIFIER_MAX_TOKENS,
-        response_format={"type": "json_object"},
     )
-    return _coerce_classification(_json_from_text(response), message)
+    return _coerce_classification(response, message)
 
 
 def run_primer_query(message: str, classification: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -554,17 +555,6 @@ def _clamp_top_k(value: Any) -> int:
     except (TypeError, ValueError):
         return DEFAULT_TOP_K
     return max(1, min(MAX_TOP_K, number))
-
-
-def _json_from_text(text: str) -> dict[str, Any]:
-    stripped = text.strip()
-    match = re.search(r"\{.*\}", stripped, re.S)
-    if match:
-        stripped = match.group(0)
-    value = json.loads(stripped)
-    if not isinstance(value, dict):
-        raise ValueError("primer classifier response must be a JSON object")
-    return value
 
 
 def _clean_text(value: Any) -> str:

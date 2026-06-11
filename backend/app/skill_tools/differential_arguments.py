@@ -1,25 +1,14 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Awaitable, Callable
 
+from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import DETERMINISTIC_ANALYSIS_ARGUMENTS_SYSTEM_PROMPT
 from backend.app.services.deepseek_client import DeepSeekClient
 
 
 Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
-
-
-def _json_from_text(text: str) -> dict[str, Any]:
-    text = text.strip()
-    match = re.search(r"\{.*\}", text, re.S)
-    if match:
-        text = match.group(0)
-    value = json.loads(text)
-    if not isinstance(value, dict):
-        raise ValueError("analysis arguments response must be a JSON object")
-    return value
 
 
 def _available_groups(data_profiles: list[dict[str, Any]], data_family: str) -> list[str]:
@@ -149,7 +138,8 @@ async def resolve_differential_arguments(
         return arguments
 
     try:
-        response = await llm.chat(
+        response = await chat_json(
+            llm,
             [
                 {"role": "system", "content": DETERMINISTIC_ANALYSIS_ARGUMENTS_SYSTEM_PROMPT},
                 {
@@ -168,15 +158,14 @@ async def resolve_differential_arguments(
             model=llm.settings.router_model,
             temperature=0,
             max_tokens=500,
-            response_format={"type": "json_object"},
         )
         if emit is not None:
             await emit(
                 "thinking_delta",
                 5,
                 f"正在解析 {skill_name} 调用参数",
-                {"delta_length": len(response)},
+                {"delta_length": len(json.dumps(response, ensure_ascii=False))},
             )
-        return sanitize(_json_from_text(response), groups)
+        return sanitize(response, groups)
     except Exception:
         return arguments

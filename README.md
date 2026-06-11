@@ -1,17 +1,49 @@
 # OpsAgent
 
-LangGraph + FastAPI + Skill 的最小可运行骨架，支持动态装载 `skill/*.md`、DeepSeek 路由、异步任务执行和 SSE 进度推送。
+OpsAgent 是一个 LangGraph + FastAPI + React + Skill contract 的最小可运行 Agent 骨架。它支持普通对话、动态 Skill 装载、确定性工具调用、Search Skill、多源网络搜索，以及用于复杂问题的 Deep Research DAG 编排。
+
+核心流程：
+
+```text
+主 Agent
+  -> 路由普通回答
+  -> 调用单个或多个 Skill
+  -> 进入 Deep Research Graph
+       -> 规划任务
+       -> 校验计划
+       -> 执行 DAG
+       -> 评估步骤
+       -> 修复或继续
+       -> 综合答案
+```
 
 ## 目录
 
-- `backend/`：FastAPI API、LangGraph 工作流、Skill 装载和执行逻辑。
-- `backend/app/llm/`：模型配置、DeepSeek 请求封装和提示词。
-- `frontend/`：前后端分离的静态聊天页面。
-- `skill/`：Skill markdown 定义。新增 `*.md` 后，下次请求会自动扫描并参与路由。
-- `memory/`：后端记忆目录。短期记忆按 `short_term/{user_id}/conversations/{session_id}.json` 落盘，上传文件预留在 `short_term/{user_id}/uploads/`，长期记忆预留在 `long_term/{user_id}/profile.json`。
-- `data/`：测试数据。
+- `backend/`：FastAPI API、LangGraph 工作流、任务管理和后端服务。
+- `backend/app/agents/`：主 Agent、Deep Research graph、任务状态编排。
+- `backend/app/llm/`：模型配置与提示词。
+- `backend/app/tools/`：工具型能力，例如网络搜索规划与搜索执行。
+- `backend/app/skill_tools/`：确定性 Skill executor。当前示例包含 trait 查询、gene info 查询、BLAST、primer 等。
+- `backend/app/services/`：任务、路由、Skill runtime、代码执行等后端服务。
+- `frontend/`：React + Vite 前端聊天界面。
+- `skill/`：Skill markdown 定义。新增 `*.md` 后，后端会动态扫描并纳入路由和 Deep Research 规划。
+- `memory/`：短期记忆、上传文件和后续长期记忆的本地目录。
+- `data/`：本地示例数据和数据库文件。
+- `tests/`：后端测试。
 
-## 配置 DeepSeek
+## 功能
+
+- 普通聊天：无工具问题直接回答。
+- Skill 路由：根据用户问题选择已注册 Skill。
+- 多 Skill 执行：同一轮可以调用多个相关 Skill。
+- Search Skill：自动或强制判断是否需要搜索，重写 query，调用 Tavily / Quark，整理 evidence。
+- Deep Research：对复杂研究问题生成 plan，按 DAG 执行，并在前端展示每个节点状态和使用的工具。
+- 本地数据查询：当前示例支持 trait2gene、gene info 等确定性查询。
+- SSE 进度：后端推送思考、工具调用、研究计划、步骤完成和最终答案流。
+
+## 配置
+
+复制环境变量模板：
 
 ```powershell
 Copy-Item .env.example .env
@@ -25,13 +57,26 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_ROUTER_MODEL=deepseek-v4-flash
 DEEPSEEK_ANSWER_MODEL=deepseek-v4-pro
 DEEPSEEK_CODE_MODEL=deepseek-v4-pro
+
+TAVILY_API_KEY=your_tavily_api_key
+TAVILY_BASE_URL=https://api.tavily.com
+
+QUARK_SEARCH_API_KEY=your_quark_search_api_key
+QUARK_SEARCH_BASE_URL=your_quark_search_base_url
+QUARK_SEARCH_WORKSPACE=default
+QUARK_SEARCH_SERVICE_ID=ops-web-search-001
+QUARK_SEARCH_QUERY_REWRITE=true
+QUARK_SEARCH_CONTENT_TYPE=snippet
+
 OPSAGENT_EXECUTION_TIMEOUT_SECONDS=20
 OPSAGENT_MEMORY_DIR=memory
 ```
 
-后端启动时会自动读取根目录 `.env`。密钥只写在 `.env`，不要提交到版本库。
+密钥只放在 `.env`，不要提交到仓库。
 
-## 启动后端
+## 启动
+
+后端默认端口是 `8001`：
 
 ```powershell
 python -m pdm use 3.11
@@ -39,62 +84,128 @@ python -m pdm install
 python -m pdm run api
 ```
 
-如果本机还没有 Python 3.11，需要先安装 Python 3.11，再执行上面的命令。当前项目要求 `requires-python = ">=3.11"`。
-
-## 启动前端
-
-前端是静态页面，可以直接打开 `frontend/index.html`。如果浏览器限制本地文件请求，可以在项目根目录启动一个静态服务：
+前端默认端口是 `5173`：
 
 ```powershell
-python -m pdm run web
+npm --prefix frontend install
+npm --prefix frontend run dev
 ```
 
-然后访问 `http://127.0.0.1:5173`。
+访问：
+
+```text
+http://127.0.0.1:5173
+```
+
+健康检查：
+
+```text
+http://127.0.0.1:8001/api/health
+```
 
 ## API
 
-- `GET http://127.0.0.1:8001/api/health`：健康检查。
+- `GET /api/health`：健康检查。
 - `GET /api/skills`：实时扫描并返回当前 Skill 列表。
-- `POST /api/uploads`：上传文件到短期记忆目录，返回文件 ID、文件名、类型、大小和保存路径。
+- `POST /api/uploads`：上传文件到短期记忆目录。
 - `POST /api/chat`：创建聊天任务，返回 `task_id` 和 SSE 地址。
-- `GET /api/tasks/{task_id}/events`：监听任务进度和最终结果。
+- `GET /api/tasks/{task_id}/events`：监听任务进度、研究计划、步骤状态和最终结果。
 
-上传文件不会把完整文件内容塞进模型上下文。聊天请求只携带附件元信息，例如 `file_id`、`filename`、`content_type`、`size` 和后端保存路径。需要读取文件内容时，应由专门 Skill 根据路径处理。
+上传文件不会把完整文件内容直接塞进模型上下文。聊天请求只携带附件元信息，例如 `file_id`、`filename`、`content_type`、`size` 和后端保存路径。需要读取文件内容时，应由专门 Skill 根据路径处理。
 
-## Skill 约定
+## Skill Contract
 
-每个 Skill 是一个 `skill/*.md` 文件，文件头部使用 frontmatter。生成代码型 Skill 只需要路由元数据和正文执行说明：
+每个 Skill 是一个 `skill/*.md` 文件，文件头部使用 frontmatter 描述能力边界。Deep Research planner 会读取这些元信息，把 Skill 纳入计划编排。下面的 gene info 只是当前项目里的示例 Skill。
+
+示例：
 
 ```markdown
 ---
-name: query_gene_expression
+name: query_gene_info
 version: 1
-description: 当用户请求查询拟南芥基因表达时触发
-trigger: 查询拟南芥基因表达量、基因在组织中的表达水平、gene expression 查询
-execution_mode: generated_python
-data_paths: data/example_gene_expression.csv
+description: 查询基因的基础信息、表达信息、功能注释和相关数据库记录。
+trigger: 用户请求查询基因详情、基因功能、基因注释、候选基因信息。
+execution_mode: deterministic_python
+executor: query_gene_info
+argument_resolver: message
+answer_requirements:
+  - 说明匹配到的基因 ID 或 symbol。
+  - 总结关键功能和证据来源。
 ---
 ```
 
-`name`、`description`、`trigger` 等元信息会被装载给路由器。只有路由命中后，后端才读取完整 Skill 文档并生成执行代码。文件正文用于指导 LLM 生成执行代码，代码需要把 JSON 可序列化结果赋值给 `result`。
+关键字段：
 
-确定性 Skill 通过 contract 声明 executor、参数解析器和 JSON schema：
+- `name`：Skill 的唯一名称。
+- `description`：给 planner 和 router 看的能力说明。
+- `trigger`：适合调用该 Skill 的用户意图。
+- `execution_mode`：执行模式，例如 `deterministic_python` 或 `generated_python`。
+- `executor`：确定性 Skill 需要注册到 runtime 的 executor 名称。
+- `answer_requirements`：该 Skill 结果在最终回答中的要求。
 
-```markdown
----
-name: differential_protein_analysis
-execution_mode: deterministic_python_r
-executor: differential_protein_analysis
-argument_resolver: differential_analysis_json
-input_schema: skill/schemas/differential_protein_analysis.input.json
-output_schema: skill/schemas/differential_protein_analysis.output.json
----
+新增 Skill 后，如果只是写了 markdown，它会被看见并参与规划；如果要真实执行，还需要在 `backend/app/services/skill_runtime.py` 注册对应 executor。
+
+## Deep Research
+
+Deep Research 适合需要多步证据整合的问题，例如：
+
+```text
+深度研究一下水稻耐盐相关基因有哪些？他们有什么功能？
 ```
 
-`deterministic_*` Skill 必须声明已注册的 `executor`，不会隐式回退到代码生成。
+典型流程：
 
-运行时统一流程是 `route -> resolve arguments -> validate input -> execute -> validate output -> final answer`。`intake` 是上传文件进入 Skill 路由前的数据修复与 profiling 阶段，产出的标准文件和 `data_profiles` 会作为 Skill 调用上下文。
+```text
+classify_intent
+  -> plan_research
+  -> validate_plan
+  -> execute_dag
+  -> evaluate_steps
+  -> repair_or_continue
+  -> synthesize_answer
+```
 
-## 安全边界
+计划节点会在前端以紧凑列表展示：
 
-当前生成代码执行器只做基础危险操作限制、执行超时和项目数据目录约束，仍在后端进程内执行，不是独立沙箱。独立进程、独立执行目录和更严格的权限隔离需要在后续安全加固阶段补上；在此之前，不要把不可信 Skill 或不可信生成代码当成已被完整隔离。
+```text
+■ 公共文献搜索：水稻耐盐基因与功能
+  Search Query Rewriter  Tavily Search  Quark Search
+
+■ 本地数据库查询：耐盐相关基因
+  trait2gene_query
+
+■ 关键基因详细信息查询
+  query_gene_info
+```
+
+后端会把上游步骤结果传给下游步骤。例如 `trait2gene_query` 得到的候选基因，会进入后续 `query_gene_info` 的输入上下文。
+
+## 测试
+
+运行后端测试：
+
+```powershell
+python -m pdm run test
+```
+
+构建前端：
+
+```powershell
+npm --prefix frontend run build
+```
+
+常用真实测试题：
+
+```text
+深度研究一下水稻耐盐相关基因有哪些？他们有什么功能？
+深度研究 COLD1 基因和水稻耐冷性的关系，结合本地数据库和公开文献。
+深度研究一下大豆产量相关基因有哪些？挑几个候选基因说明功能。
+```
+
+## 当前边界
+
+- 这是中央编排式 Agent，不是无限递归的自由多智能体系统。
+- Deep Research 会读取 Skill catalog 并自动规划，但只有注册了 executor 的 Skill 才能稳定真实执行。
+- 当前还没有持久化 checkpoint。刷新或进程重启后的任务恢复能力需要后续补充。
+- 长记忆目录已经预留，但高价值结论抽取和向量化检索还需要继续设计。
+- 生成代码型 Skill 仍需要更强的沙箱隔离，不应执行不可信 Skill。

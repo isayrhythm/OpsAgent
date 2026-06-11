@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.config import DATA_DIR
+from backend.app.llm.calls import chat_json
 from backend.app.schemas import UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.skill_tools.gene_info_lookup import enrich_blast_hits
@@ -84,7 +85,8 @@ class QuerySequence:
 async def classify_blast_query(message: str, llm: DeepSeekClient) -> dict[str, Any]:
     if not getattr(llm, "available", False):
         return _fallback_classification(message)
-    response = await llm.chat(
+    response = await chat_json(
+        llm,
         [
             {
                 "role": "system",
@@ -117,9 +119,8 @@ async def classify_blast_query(message: str, llm: DeepSeekClient) -> dict[str, A
         model=getattr(getattr(llm, "settings", None), "router_model", None),
         temperature=0,
         max_tokens=CLASSIFIER_MAX_TOKENS,
-        response_format={"type": "json_object"},
     )
-    return _coerce_classification(_json_from_text(response), message)
+    return _coerce_classification(response, message)
 
 
 def run_blast_query(
@@ -629,11 +630,3 @@ def _dedupe(items: list[str]) -> list[str]:
             seen.add(item)
             result.append(item)
     return result
-
-
-def _json_from_text(text: str) -> dict[str, Any]:
-    match = re.search(r"\{.*\}", str(text or "").strip(), re.S)
-    payload = json.loads(match.group(0) if match else text)
-    if not isinstance(payload, dict):
-        raise ValueError("BLAST classifier response must be a JSON object.")
-    return payload

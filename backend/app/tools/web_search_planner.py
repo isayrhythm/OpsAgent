@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from backend.app.llm.calls import chat_json
 from backend.app.schemas import ChatHistoryMessage
 
 
@@ -81,7 +82,8 @@ async def plan_web_search(
             ],
             "max_queries": max_queries,
         }
-        content = await llm.chat(
+        content = await chat_json(
+            llm,
             [
                 {"role": "system", "content": _PLANNER_SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -89,9 +91,8 @@ async def plan_web_search(
             model=getattr(getattr(llm, "settings", None), "router_model", None),
             temperature=0,
             max_tokens=900,
-            response_format={"type": "json_object"},
         )
-        return _plan_from_json(content, fallback=fallback, mode=normalized_mode, max_queries=max_queries)
+        return _plan_from_data(content, fallback=fallback, mode=normalized_mode, max_queries=max_queries)
     except Exception:
         return fallback
 
@@ -144,8 +145,7 @@ def _looks_time_sensitive(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-def _plan_from_json(content: str, *, fallback: SearchPlan, mode: str, max_queries: int) -> SearchPlan:
-    data = _json_object(content)
+def _plan_from_data(data: dict[str, Any] | None, *, fallback: SearchPlan, mode: str, max_queries: int) -> SearchPlan:
     if not isinstance(data, dict):
         return fallback
 
@@ -182,21 +182,6 @@ def _plan_from_json(content: str, *, fallback: SearchPlan, mode: str, max_querie
         queries=queries,
         freshness_required=bool(data.get("freshness_required", fallback.freshness_required)),
     )
-
-
-def _json_object(content: str) -> Any:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        start = content.find("{")
-        end = content.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
-        try:
-            return json.loads(content[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-
 
 def _int_or_default(value: Any, default: int) -> int:
     try:

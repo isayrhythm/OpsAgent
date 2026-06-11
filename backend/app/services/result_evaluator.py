@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
+from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import RESULT_EVALUATOR_SYSTEM_PROMPT
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
@@ -13,17 +13,6 @@ MAX_STRING_LENGTH = 10000
 MAX_LIST_ITEMS = 30
 MAX_DICT_ITEMS = 24
 MAX_EVALUATOR_INPUT_CHARS = 20000
-
-
-def _json_from_text(text: str) -> dict[str, object]:
-    text = text.strip()
-    match = re.search(r"\{.*\}", text, re.S)
-    if match:
-        text = match.group(0)
-    value = json.loads(text)
-    if not isinstance(value, dict):
-        raise ValueError("result evaluator response must be a JSON object")
-    return value
 
 
 def compact_value(value: Any, depth: int = 0) -> Any:
@@ -138,7 +127,8 @@ async def evaluate_skill_result(
             ),
         }
     try:
-        response = await llm.chat(
+        evaluated = await chat_json(
+            llm,
             [
                 {"role": "system", "content": RESULT_EVALUATOR_SYSTEM_PROMPT},
                 {"role": "user", "content": payload_text},
@@ -146,9 +136,7 @@ async def evaluate_skill_result(
             model=llm.settings.router_model,
             temperature=0,
             max_tokens=500,
-            response_format={"type": "json_object"},
         )
-        evaluated = _json_from_text(response)
     except Exception:
         return fallback
 

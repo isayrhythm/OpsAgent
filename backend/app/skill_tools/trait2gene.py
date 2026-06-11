@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from backend.app.config import DATA_DIR
+from backend.app.llm.calls import chat_json
 from backend.app.services.deepseek_client import DeepSeekClient
 
 
@@ -101,7 +102,8 @@ async def classify_trait2gene_query(message: str, llm: DeepSeekClient) -> dict[s
     if not getattr(llm, "available", False):
         return _fallback_classification(message, categories)
 
-    response = await llm.chat(
+    response = await chat_json(
+        llm,
         [
             {
                 "role": "system",
@@ -148,9 +150,8 @@ async def classify_trait2gene_query(message: str, llm: DeepSeekClient) -> dict[s
         model=getattr(getattr(llm, "settings", None), "router_model", None),
         temperature=0,
         max_tokens=CLASSIFIER_MAX_TOKENS,
-        response_format={"type": "json_object"},
     )
-    classification = _coerce_classification(_json_from_text(response), categories)
+    classification = _coerce_classification(response, categories)
     classification = _apply_default_match_mode(message, classification)
     if _has_invalid_categories(classification, categories) or not classification["selected"]:
         classification = await _repair_classification(message, classification, categories, llm)
@@ -434,7 +435,8 @@ async def _repair_classification(
 ) -> dict[str, Any]:
     if not getattr(llm, "available", False):
         return classification
-    response = await llm.chat(
+    response = await chat_json(
+        llm,
         [
             {
                 "role": "system",
@@ -477,9 +479,8 @@ async def _repair_classification(
         model=getattr(getattr(llm, "settings", None), "router_model", None),
         temperature=0,
         max_tokens=CLASSIFIER_MAX_TOKENS,
-        response_format={"type": "json_object"},
     )
-    return _coerce_classification(_json_from_text(response), categories)
+    return _coerce_classification(response, categories)
 
 
 def _has_invalid_categories(classification: dict[str, Any], categories: dict[str, list[str]]) -> bool:
@@ -579,17 +580,6 @@ def _extract_top_k(message: str) -> int:
         if match:
             return _clamp_top_k(match.group(1))
     return DEFAULT_TOP_K
-
-
-def _json_from_text(text: str) -> dict[str, Any]:
-    stripped = text.strip()
-    match = re.search(r"\{.*\}", stripped, re.S)
-    if match:
-        stripped = match.group(0)
-    payload = json.loads(stripped)
-    if not isinstance(payload, dict):
-        raise ValueError("trait2gene classifier response must be a JSON object")
-    return payload
 
 
 def _clamp_top_k(value: Any) -> int:

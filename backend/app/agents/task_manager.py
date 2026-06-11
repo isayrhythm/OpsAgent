@@ -113,6 +113,8 @@ class TaskManager:
             )
             answer = result.get("answer") or ""
             search_result = result.get("search") if isinstance(result.get("search"), dict) else {}
+            search_result = {key: value for key, value in search_result.items() if key != "task"}
+            research_result = result.get("research") if isinstance(result.get("research"), dict) else {}
             if state.session_id and answer:
                 self._memory.append_exchange(
                     state.user_id,
@@ -132,12 +134,15 @@ class TaskManager:
                     "skill_output": result.get("skill_output"),
                     "skill_outputs": result.get("skill_outputs"),
                     "answer": answer,
-                    "web_sources": search_result.get("sources") or result.get("web_sources") or [],
-                    "mode": "web_search" if search_result.get("enabled") else ("skill" if result.get("skill_name") else "chat"),
+                    "web_sources": research_result.get("sources") or search_result.get("sources") or result.get("web_sources") or [],
+                    "mode": "deep_research"
+                    if research_result
+                    else ("web_search" if search_result.get("enabled") else ("skill" if result.get("skill_name") else "chat")),
                     "web_search_mode": search_result.get("mode") or state.web_search_mode,
                     "web_search_providers": search_result.get("providers") or state.web_search_providers,
                     "web_search_plan": search_result.get("plan"),
                     "search": search_result,
+                    "research": research_result,
                     "usage": llm.usage_snapshot(),
                 },
             )

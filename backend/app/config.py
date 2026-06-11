@@ -18,10 +18,7 @@ WEB_SEARCH_PROVIDER = os.getenv("WEB_SEARCH_PROVIDER", "tavily").strip().lower()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com")
 QUARK_SEARCH_API_KEY = os.getenv("QUARK_SEARCH_API_KEY", "")
-QUARK_SEARCH_BASE_URL = os.getenv(
-    "QUARK_SEARCH_BASE_URL",
-    "http://default-b9kf.platform-cn-shanghai.opensearch.aliyuncs.com",
-)
+QUARK_SEARCH_BASE_URL = os.getenv("QUARK_SEARCH_BASE_URL", "")
 QUARK_SEARCH_WORKSPACE = os.getenv("QUARK_SEARCH_WORKSPACE", "default")
 QUARK_SEARCH_SERVICE_ID = os.getenv("QUARK_SEARCH_SERVICE_ID", "ops-web-search-001")
 QUARK_SEARCH_QUERY_REWRITE = os.getenv("QUARK_SEARCH_QUERY_REWRITE", "true").strip().lower() not in {

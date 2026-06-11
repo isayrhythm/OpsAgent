@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import ROUTER_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
@@ -19,17 +20,6 @@ class RouteDecision:
     skill: SkillSpec | None
     skills: list[SkillSpec]
     reason: str
-
-
-def _json_from_text(text: str) -> dict[str, object]:
-    text = text.strip()
-    match = re.search(r"\{.*\}", text, re.S)
-    if match:
-        text = match.group(0)
-    value = json.loads(text)
-    if not isinstance(value, dict):
-        raise ValueError("router response must be a JSON object")
-    return value
 
 
 def _dedupe_skills(skills: list[SkillSpec]) -> list[SkillSpec]:
@@ -102,46 +92,45 @@ async def route_skill(
         }
         for skill in skills
     ]
-    response = await llm.chat(
-        [
-            {
-                "role": "system",
-                "content": ROUTER_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "current_message": _compact_sequence_text(message),
-                        "recent_focus": _recent_focus(history),
-                        "history": [
-                            {"role": item.role, "content": _compact_sequence_text(item.content)}
-                            for item in history[-8:]
-                        ],
-                        "data_profiles": data_profiles or [],
-                        "detached_files": [
-                            {"file_id": item.file_id, "filename": item.filename}
-                            for item in (detached_files or [])
-                        ],
-                        "skills": catalog,
-                        "output_schema": {
-                            "skill_names": ["string"],
-                            "reason": "string",
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        ],
-        model=llm.settings.router_model,
-        temperature=0,
-        max_tokens=500,
-        response_format={"type": "json_object"},
-    )
     try:
-        routed = _json_from_text(response)
+        routed = await chat_json(
+            llm,
+            [
+                {
+                    "role": "system",
+                    "content": ROUTER_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "current_message": _compact_sequence_text(message),
+                            "recent_focus": _recent_focus(history),
+                            "history": [
+                                {"role": item.role, "content": _compact_sequence_text(item.content)}
+                                for item in history[-8:]
+                            ],
+                            "data_profiles": data_profiles or [],
+                            "detached_files": [
+                                {"file_id": item.file_id, "filename": item.filename}
+                                for item in (detached_files or [])
+                            ],
+                            "skills": catalog,
+                            "output_schema": {
+                                "skill_names": ["string"],
+                                "reason": "string",
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            model=llm.settings.router_model,
+            temperature=0,
+            max_tokens=500,
+        )
     except Exception as exc:
-        raise RuntimeError(f"DeepSeek router returned invalid JSON: {response}") from exc
+        raise RuntimeError("DeepSeek router returned invalid JSON") from exc
 
     skill_names = routed.get("skill_names")
     if not isinstance(skill_names, list):

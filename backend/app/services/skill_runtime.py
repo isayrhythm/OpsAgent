@@ -12,6 +12,7 @@ from backend.app.skill_tools.differential_arguments import resolve_differential_
 from backend.app.skill_tools.differential_protein import run_differential_protein_analysis
 from backend.app.skill_tools.differential_transcriptomics import run_differential_transcriptomics_analysis
 from backend.app.skill_tools.gene_function_research_path import run_gene_function_research_path_query
+from backend.app.skill_tools.gene_info_lookup import run_gene_info_query
 from backend.app.skill_tools.gene_mutant_query import run_gene_mutant_query
 from backend.app.skill_tools.gene_phenotype_prediction import run_gene_phenotype_prediction
 from backend.app.skill_tools.primer_query import classify_primer_query, run_primer_query
@@ -123,6 +124,13 @@ async def _run_gene_function_research_path(
     _context: SkillExecutionContext,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(run_gene_function_research_path_query, invocation.arguments["message"])
+
+
+async def _run_gene_info_query(
+    invocation: SkillInvocation,
+    _context: SkillExecutionContext,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(run_gene_info_query, invocation.arguments["message"])
 
 
 async def _run_gene_phenotype_prediction(
@@ -295,6 +303,11 @@ SKILL_EXECUTORS = {
         name="gene_function_research_path_query",
         mode="deterministic_query",
         run=_run_gene_function_research_path,
+    ),
+    "query_gene_info": SkillExecutorBinding(
+        name="query_gene_info",
+        mode="deterministic_query",
+        run=_run_gene_info_query,
     ),
     "gene_phenotype_prediction": SkillExecutorBinding(
         name="gene_phenotype_prediction",

@@ -38,6 +38,8 @@ MIN_SUMMARY_CHARS = 160
 DEFAULT_SUMMARY_CHARS = 700
 TOTAL_SUMMARY_BUDGET = 12000
 MAX_SUMMARY_LINES = 6
+MAX_QUERY_TERMS = 40
+MAX_GENE_INFO_TEXT_CHARS = 3000
 
 
 def enrich_blast_hits(hits: list[dict[str, Any]]) -> dict[str, int]:
@@ -235,3 +237,157 @@ def _dedupe(items: list[str]) -> list[str]:
 
 def clear_gene_info_lookup_cache() -> None:
     _load_trans.cache_clear()
+
+
+def run_gene_info_query(message: str) -> dict[str, Any]:
+    terms = _extract_query_terms(message)
+    species_scope = _species_scope(message)
+    if not species_scope:
+        species_scope = list(GENE_TRANS_PATHS)
+
+    mappings: list[dict[str, str]] = []
+    seen_mappings: set[tuple[str, str, str]] = set()
+    for term in terms[:MAX_QUERY_TERMS]:
+        for species in _species_for_term(term, species_scope):
+            mapping = resolve_gene_record(species, term)
+            if mapping is None:
+                continue
+            key = (term.lower(), mapping["species"], mapping["canonical_id"].lower())
+            if key in seen_mappings:
+                continue
+            seen_mappings.add(key)
+            mappings.append({"input": term, **mapping})
+
+    wanted_by_species: dict[str, set[str]] = {}
+    for mapping in mappings:
+        wanted_by_species.setdefault(mapping["species"], set()).add(mapping["canonical_id"])
+
+    info_by_key: dict[tuple[str, str], str] = {}
+    for species, canonical_ids in wanted_by_species.items():
+        for canonical_id, text in _stream_gene_info(species, canonical_ids).items():
+            info_by_key[(species, canonical_id.lower())] = text
+
+    matches: list[dict[str, Any]] = []
+    not_found: list[dict[str, Any]] = []
+    for mapping in mappings:
+        text = info_by_key.get((mapping["species"], mapping["canonical_id"].lower()))
+        if text is None:
+            not_found.append(
+                {
+                    "input": mapping["input"],
+                    "species": mapping["species"],
+                    "canonical_id": mapping["canonical_id"],
+                    "reason": "The canonical gene ID was resolved, but no local gene info record was found.",
+                }
+            )
+            continue
+        matches.append(
+            {
+                "input": mapping["input"],
+                "species": mapping["species"],
+                "matched": True,
+                "matched_by": mapping["matched_by"],
+                "canonical_id": mapping["canonical_id"],
+                "text": _truncate_gene_info_text(text),
+                **compact_gene_info(text),
+            }
+        )
+
+    if not mappings:
+        not_found = [
+            {
+                "input": term,
+                "species_searched": species_scope,
+                "reason": "No canonical gene ID mapping was found for this query term.",
+            }
+            for term in terms[:MAX_QUERY_TERMS]
+        ]
+
+    return {
+        "status": "completed" if matches else "not_found",
+        "analysis": "query_gene_info",
+        "query": message,
+        "query_terms": terms,
+        "species_searched": species_scope,
+        "gene_mappings": mappings,
+        "matches": matches,
+        "not_found": not_found,
+    }
+
+
+def _extract_query_terms(message: str) -> list[str]:
+    terms = []
+    stop_words = {
+        "current",
+        "research",
+        "step",
+        "question",
+        "purpose",
+        "dependency",
+        "outputs",
+        "summary",
+        "structured_result",
+        "candidate_gene_ids",
+        "gene",
+        "genes",
+        "rice",
+        "maize",
+        "soy",
+        "soybean",
+        "arabidopsis",
+    }
+    for match in re.finditer(r"(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9_.-]{2,80}(?![A-Za-z0-9_.-])", message or ""):
+        term = match.group(0).strip(".,;:()[]{}<>\"'")
+        if not term or term.lower() in stop_words:
+            continue
+        if _looks_like_gene_query_term(term):
+            terms.append(term)
+    return _dedupe(terms)
+
+
+def _looks_like_gene_query_term(term: str) -> bool:
+    return bool(_looks_like_canonical_gene_id(term) or re.fullmatch(r"[A-Za-z]{2,}\d+[A-Za-z0-9_-]*", term))
+
+
+def _looks_like_canonical_gene_id(term: str) -> bool:
+    return bool(
+        re.search(
+            r"^(AGIS_Os\d+g\d+|LOC_Os\d+g\d+|Os\d+g\d+|AT[1-5CM]G\d+|Zm\d+[A-Za-z0-9_.-]*|Glyma\.\d+G\d+|GmW82\.\d+G\d+)",
+            term,
+            re.I,
+        )
+    )
+
+
+def _species_scope(message: str) -> list[str]:
+    text = str(message or "").lower()
+    scope: list[str] = []
+    if re.search(r"rice|oryza|loc_os|agis_os|os\d+g|水稻", text, re.I):
+        scope.append("rice")
+    if re.search(r"maize|corn|zea|zm\d+|玉米", text, re.I):
+        scope.append("maize")
+    if re.search(r"soy|soybean|glyma|gmw82|大豆", text, re.I):
+        scope.append("soy")
+    if re.search(r"arabidopsis|tair|at[1-5cm]g|拟南芥", text, re.I):
+        scope.append("ath")
+    return _dedupe(scope)
+
+
+def _species_for_term(term: str, species_scope: list[str]) -> list[str]:
+    lower = term.lower()
+    if re.match(r"^(agis_os|loc_os|os\d+g)", lower):
+        return ["rice"]
+    if re.match(r"^at[1-5cm]g", lower):
+        return ["ath"]
+    if re.match(r"^zm\d+", lower):
+        return ["maize"]
+    if re.match(r"^(glyma\.|gmw82\.)", lower):
+        return ["soy"]
+    return species_scope
+
+
+def _truncate_gene_info_text(text: str) -> str:
+    value = str(text or "")
+    if len(value) <= MAX_GENE_INFO_TEXT_CHARS:
+        return value
+    return value[:MAX_GENE_INFO_TEXT_CHARS].rstrip() + "... <truncated>"

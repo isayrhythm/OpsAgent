@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from backend.app.llm.calls import complete_text
 from backend.app.llm.prompts import FINAL_ANSWER_SYSTEM_PROMPT, GENERAL_CHAT_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.services.code_executor import SkillCodeExecutionError, execute_skill, retry_skill
@@ -18,6 +19,7 @@ from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.id_mapping import enrich_skill_output_with_id_mapping
 from backend.app.services.result_evaluator import compact_value, evaluate_skill_result
 from backend.app.services.skill_loader import SkillSpec
+from backend.app.agents.deep_research import build_research_graph, should_route_deep_research
 from backend.app.agents.skill_registry import load_skill_registry, route_registered_skills
 from backend.app.agents.skill_result_adapter import answer_ready_output, ui_block_events
 from backend.app.tools.web_search import format_web_search_context, search_web_queries, web_search_sources
@@ -39,6 +41,8 @@ class AgentState(TypedDict, total=False):
     data_profiles: list[dict[str, Any]]
     skill_output: dict[str, Any]
     skill_outputs: list[dict[str, Any]]
+    route_mode: str
+    research: dict[str, Any]
     search: dict[str, Any]
     answer: str
 
@@ -115,17 +119,18 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         return {**updates, "attachments": ready_attachments, "data_profiles": data_profiles}
 
     async def load_skill_node(state: AgentState) -> AgentState:
-        await emit("progress", 2, "正在理解请求", None)
+        await emit("progress", 2, "思考中", None)
         skills = load_skill_registry()
-        await emit(
-            "progress",
-            2,
-            "正在判断是否需要专门能力",
-            None,
-        )
         return {"skills": skills}
 
     async def route_node(state: AgentState) -> AgentState:
+        if should_route_deep_research(state["message"]):
+            return {
+                "skill_name": None,
+                "skill_names": [],
+                "route_mode": "deep_research",
+                "route_reason": "deep research intent",
+            }
         selection = await route_registered_skills(
             message=state["message"],
             skills=state.get("skills", []),
@@ -135,9 +140,31 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             detached_files=state.get("detached_files", []),
         )
         if not selection.get("skills"):
-            await emit("progress", 4, "使用普通对话模式", None)
-            return selection
-        return selection
+            return {**selection, "route_mode": "chat"}
+        return {**selection, "route_mode": "skill"}
+
+    async def research_node(state: AgentState) -> AgentState:
+        research_graph = build_research_graph(llm, emit)
+        result = await research_graph.ainvoke(
+            {
+                "message": state["message"],
+                "history": state.get("history", []),
+                "providers": normalize_search_state(state).get("providers", []),
+                "skills": state.get("skills", []),
+            }
+        )
+        answer = result.get("answer") or ""
+        return {
+            "answer": answer,
+            "research": {
+                "intent": result.get("intent"),
+                "plan": result.get("plan"),
+                "tasks": result.get("completed_tasks"),
+                "evaluations": result.get("evaluations"),
+                "sources": result.get("sources") or [],
+            },
+            "web_sources": result.get("sources") or [],
+        }
 
     async def run_one_skill(skill: SkillSpec, state: AgentState) -> dict[str, Any]:
         await emit("progress", 5, f"正在调用 {skill.name}", {"agent": skill.name, "agent_state": "running"})
@@ -399,15 +426,14 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                         },
                         *llm_history_messages(state),
                     ]
-                answer = ""
-                async for delta in llm.stream_chat(
+                answer = await complete_text(
+                    llm,
                     messages,
                     model=llm.settings.answer_model,
                     temperature=0.4,
                     max_tokens=1200,
-                ):
-                    answer += delta
-                    await emit("answer_delta", 7, "输出中", {"delta": delta})
+                    emit_delta=lambda delta: emit("answer_delta", 7, "输出中", {"delta": delta}),
+                )
             return {
                 "answer": answer,
                 "web_sources": web_search_data["sources"] if llm.available else [],
@@ -474,15 +500,14 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                     ),
                 },
             ]
-            answer = ""
-            async for delta in llm.stream_chat(
+            answer = await complete_text(
+                llm,
                 messages,
                 model=llm.settings.answer_model,
                 temperature=0.2,
                 max_tokens=1800,
-            ):
-                answer += delta
-                await emit("answer_delta", 7, "输出中", {"delta": delta})
+                emit_delta=lambda delta: emit("answer_delta", 7, "输出中", {"delta": delta}),
+            )
         await emit_ui_blocks(state)
         return {
             "answer": answer,
@@ -494,18 +519,23 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
     graph.add_node("load_skills", load_skill_node)
     graph.add_node("route", route_node)
     graph.add_node("execute_skill", execute_node)
+    graph.add_node("research_graph", research_node)
     graph.add_node("final_answer", answer_node)
     graph.set_entry_point("intake_uploads")
     graph.add_edge("intake_uploads", "load_skills")
     graph.add_edge("load_skills", "route")
     graph.add_conditional_edges(
         "route",
-        lambda state: "execute_skill" if state.get("skill_name") else "final_answer",
+        lambda state: "research_graph"
+        if state.get("route_mode") == "deep_research"
+        else ("execute_skill" if state.get("skill_name") else "final_answer"),
         {
+            "research_graph": "research_graph",
             "execute_skill": "execute_skill",
             "final_answer": "final_answer",
         },
     )
     graph.add_edge("execute_skill", "final_answer")
+    graph.add_edge("research_graph", END)
     graph.add_edge("final_answer", END)
     return graph.compile()

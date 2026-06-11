@@ -119,6 +119,7 @@ function normalizeSession(session) {
             contextContent: String(message.contextContent || message.content || ""),
             createdAt: Number(message.createdAt || Date.now()),
             usage: message.usage,
+            researchPlan: normalizeResearchPlan(message.researchPlan),
             uiBlocks: Array.isArray(message.uiBlocks) ? message.uiBlocks : [],
             webSources: Array.isArray(message.webSources) ? message.webSources : [],
             status: message.status || (disconnected ? "任务连接已中断，请重新发送" : null),
@@ -427,7 +428,7 @@ function renderMarkdown(content, apiBase, sources) {
 function applyUiDelta(blocks, delta) {
   const current = Array.isArray(blocks) ? blocks : [];
   if (delta?.action === "start" && delta.block?.id) {
-    const block = {...delta.block, steps: []};
+    const block = {...delta.block, steps: Array.isArray(delta.block.steps) ? delta.block.steps : []};
     return [...current.filter((item) => item.id !== block.id), block];
   }
   if (delta?.action === "step" && delta.block_id && delta.step) {
@@ -435,12 +436,69 @@ function applyUiDelta(blocks, delta) {
       if (block.id !== delta.block_id) {
         return block;
       }
-      const stepKey = String(delta.step.step || "");
-      const steps = [...(block.steps || []).filter((step) => String(step.step || "") !== stepKey), delta.step];
+      const stepKey = String(delta.step.step || delta.step.id || "");
+      const steps = [...(block.steps || []).filter((step) => String(step.step || step.id || "") !== stepKey), delta.step];
       return {...block, steps};
     });
   }
   return current;
+}
+
+function normalizeResearchPlan(plan) {
+  if (!plan || typeof plan !== "object") {
+    return null;
+  }
+  const rawSteps = Array.isArray(plan.steps) ? plan.steps : Array.isArray(plan.tasks) ? plan.tasks : [];
+  const steps = rawSteps.map(normalizeResearchStep);
+  if (!steps.length) {
+    return null;
+  }
+  return {
+    summary: String(plan.summary || ""),
+    steps,
+  };
+}
+
+function normalizeResearchStep(step) {
+  const tools = Array.isArray(step?.tools) ? step.tools.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  const rawToolDetails = Array.isArray(step?.tool_details) ? step.tool_details : Array.isArray(step?.toolDetails) ? step.toolDetails : [];
+  const toolDetails = rawToolDetails
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      name: String(item.name || "").trim(),
+      type: String(item.type || "").trim(),
+      description: String(item.description || "").trim(),
+      trigger: String(item.trigger || "").trim(),
+    }))
+    .filter((item) => item.name);
+  return {
+    id: String(step?.id || step?.step || ""),
+    step: String(step?.step || step?.id || ""),
+    title: String(step?.title || step?.question || step?.id || ""),
+    question: String(step?.question || ""),
+    purpose: String(step?.purpose || ""),
+    status: String(step?.status || "pending"),
+    tools,
+    toolDetails,
+  };
+}
+
+function applyResearchProgress(currentPlan, data) {
+  const plan = data?.research_plan;
+  if (plan && typeof plan === "object") {
+    return normalizeResearchPlan(plan);
+  }
+  const step = data?.research_step;
+  if (!step || typeof step !== "object") {
+    return currentPlan || null;
+  }
+  const normalizedStep = normalizeResearchStep(step);
+  const base = currentPlan || {summary: "", steps: []};
+  const key = normalizedStep.id || normalizedStep.step;
+  const steps = base.steps.some((item) => (item.id || item.step) === key)
+    ? base.steps.map((item) => ((item.id || item.step) === key ? {...item, ...normalizedStep} : item))
+    : [...base.steps, normalizedStep];
+  return {...base, steps};
 }
 
 function groupLabel(session) {
@@ -499,7 +557,7 @@ function agentStatus(payload, activeAgents) {
     const [name, isRetry] = agents[0];
     return isRetry ? `正在重新调用 ${name}` : `正在调用 ${name}`;
   }
-  return `正在调用 ${agents.length} 个能力：${agents.map(([name]) => name).join("、")}`;
+  return `正在调用 ${agents.length} 个工具：${agents.map(([name]) => name).join("、")}`;
 }
 
 function App() {
@@ -602,6 +660,7 @@ function App() {
           content: "",
           status: "正在恢复任务",
           uiBlocks: [],
+          researchPlan: null,
           webSources: [],
           usage: normalizeUsage({...messageItem.usage, internal: 0, output: 0}),
         }));
@@ -955,6 +1014,7 @@ function App() {
       role: "agent",
       content: "",
       uiBlocks: [],
+      researchPlan: null,
       createdAt: Date.now(),
       status: "正在提交任务",
       streaming: true,
@@ -1018,7 +1078,11 @@ function App() {
     source.addEventListener("progress", (event) => {
       const payload = JSON.parse(event.data);
       const status = agentStatus(payload, activeAgents);
-      updateMessage(sessionId, messageId, (messageItem) => ({...messageItem, status}));
+      updateMessage(sessionId, messageId, (messageItem) => ({
+        ...messageItem,
+        status,
+        researchPlan: applyResearchProgress(messageItem.researchPlan, payload.data),
+      }));
     });
 
     source.addEventListener("thinking_delta", (event) => {
@@ -1077,6 +1141,13 @@ function App() {
           ...messageItem,
           content,
           webSources: payload.data?.web_sources || sourceCacheRef.current.get(messageId) || messageItem.webSources || [],
+          researchPlan:
+            normalizeResearchPlan({
+              summary: payload.data?.research?.plan?.summary,
+              steps: payload.data?.research?.tasks,
+            }) ||
+            messageItem.researchPlan ||
+            null,
           status: null,
           streaming: false,
           usage,
@@ -1388,7 +1459,7 @@ function EmptyState({onPick}) {
       <div className="empty-card">
         <p className="eyebrow">OpsAgent</p>
         <h1>今天想处理什么？</h1>
-        <p>直接聊天即可。需要专门能力时，后端会自动选择并执行 skill。</p>
+        <p>直接聊天即可。需要工具时，后端会自动选择并执行。</p>
       </div>
       <div className="suggestions">
         {suggestions.map((item) => (
@@ -1418,13 +1489,15 @@ function MessageList({messages, apiBase}) {
 
 function MessageTurn({message, apiBase}) {
   const isUser = message.role === "user";
-  const bubbleClass = `bubble ${!isUser && message.status && !message.content && !message.uiBlocks?.length ? "thinking-only" : ""}`;
+  const hasResearchPlan = Boolean(message.researchPlan?.steps?.length);
+  const bubbleClass = `bubble ${!isUser && message.status && !message.content && !message.uiBlocks?.length && !hasResearchPlan ? "thinking-only" : ""}`;
   return (
     <article className={`message-turn ${isUser ? "user" : "agent"}`}>
       {!isUser ? <div className="avatar">Ops</div> : null}
       <div className="message-stack">
         <div className={bubbleClass}>
           {!isUser && message.status ? <ThinkingPill text={message.status} /> : null}
+          {!isUser && hasResearchPlan ? <ResearchPlan plan={message.researchPlan} /> : null}
           {isUser ? (
             <p>{message.content}</p>
           ) : message.content ? (
@@ -1438,6 +1511,49 @@ function MessageTurn({message, apiBase}) {
         <div className={`message-meta ${isUser ? "user-meta" : ""}`}>
           <CopyButton text={message.content} />
         </div>
+      </div>
+    </article>
+  );
+}
+
+function ResearchPlan({plan}) {
+  const steps = plan.steps || [];
+  return (
+    <section className="research-plan">
+      <header className="research-plan-head">
+        <span>Research plan</span>
+        <small>{steps.filter((step) => step.status === "completed").length}/{steps.length}</small>
+      </header>
+      {plan.summary ? <p className="research-plan-summary">{plan.summary}</p> : null}
+      <div className="research-plan-list">
+        {steps.map((step) => (
+          <ResearchPlanItem key={step.id || step.step || step.title} step={step} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ResearchPlanItem({step}) {
+  const done = step.status === "completed";
+  const running = step.status === "running";
+  const failed = step.status === "failed";
+  const skipped = step.status === "skipped";
+  return (
+    <article className={`research-plan-item ${step.status}`}>
+      <span className="research-plan-box">{done ? "■" : "□"}</span>
+      <div className="research-plan-body">
+        <div className="research-plan-title">
+          <strong>{step.title || step.question || step.id}</strong>
+          <em>{failed ? "failed" : running ? "running" : done ? "done" : skipped ? "planned" : "pending"}</em>
+        </div>
+        {step.tools?.length ? (
+          <div className="research-plan-tools">
+            {step.tools.map((tool) => (
+              <span key={tool}>{tool}</span>
+            ))}
+          </div>
+        ) : null}
       </div>
     </article>
   );
