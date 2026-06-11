@@ -1247,6 +1247,13 @@ button {
   align-items: center;
 }
 
+.composer-action-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
 .composer-mode {
   display: inline-flex;
   align-items: center;

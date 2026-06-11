@@ -67,7 +67,18 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     calls = {}
 
     class FakeTasks:
-        def create_task(self, message, user_id, session_id, history, attachments, detached_files, web_search=False):
+        def create_task(
+            self,
+            message,
+            user_id,
+            session_id,
+            history,
+            attachments,
+            detached_files,
+            web_search=False,
+            web_search_mode="auto",
+            web_search_providers=None,
+        ):
             calls["message"] = message
             calls["user_id"] = user_id
             calls["session_id"] = session_id
@@ -75,6 +86,8 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
             calls["attachments"] = attachments
             calls["detached_files"] = detached_files
             calls["web_search"] = web_search
+            calls["web_search_mode"] = web_search_mode
+            calls["web_search_providers"] = web_search_providers
             return "task-1"
 
     monkeypatch.setattr(main, "tasks", FakeTasks())
@@ -98,6 +111,8 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
             ],
             "detached_files": [{"file_id": "file-b", "filename": "removed.csv"}],
             "web_search": True,
+            "web_search_mode": "force",
+            "web_search_providers": ["tavily", "quark"],
         },
     )
 
@@ -110,6 +125,8 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     assert calls["attachments"][0].filename == "a.txt"
     assert calls["detached_files"][0].filename == "removed.csv"
     assert calls["web_search"] is True
+    assert calls["web_search_mode"] == "force"
+    assert calls["web_search_providers"] == ["tavily", "quark"]
 
 
 def test_cancel_endpoint_delegates_to_task_manager(monkeypatch) -> None:

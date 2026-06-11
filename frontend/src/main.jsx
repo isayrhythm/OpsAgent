@@ -23,6 +23,10 @@ const MENU_WIDTH = 172;
 const MENU_HEIGHT = 156;
 const UI_DELTA_INITIAL_REVEAL_MS = 120;
 const UI_DELTA_STEP_REVEAL_MS = 460;
+const SEARCH_PROVIDERS = [];
+const DEFAULT_WEB_SEARCH_PROVIDERS = ["tavily", "quark"];
+const SEARCH_MODES = [{id: "force", label: "网络搜索"}];
+const DEFAULT_WEB_SEARCH_MODE = "auto";
 
 const ALLOWED_MARKDOWN_TAGS = new Set([
   "a",
@@ -78,7 +82,20 @@ function loadUserId() {
   return id;
 }
 
+function normalizeWebSearchProviders(value, legacyEnabled = false) {
+  const allowed = new Set(DEFAULT_WEB_SEARCH_PROVIDERS);
+  const raw = Array.isArray(value) ? value : DEFAULT_WEB_SEARCH_PROVIDERS;
+  return raw.map((item) => String(item || "").trim().toLowerCase()).filter((item, index, items) => allowed.has(item) && items.indexOf(item) === index);
+}
+
+function normalizeWebSearchMode(value, legacyEnabled = false) {
+  const mode = String(value || "").trim().toLowerCase();
+  return mode === "force" || legacyEnabled ? "force" : DEFAULT_WEB_SEARCH_MODE;
+}
+
 function normalizeSession(session) {
+  const webSearchProviders = normalizeWebSearchProviders(session.webSearchProviders, Boolean(session.webSearchEnabled));
+  const webSearchMode = normalizeWebSearchMode(session.webSearchMode, Boolean(session.webSearchEnabled));
   return {
     id: session.id || crypto.randomUUID(),
     title: session.title || "新对话",
@@ -86,7 +103,9 @@ function normalizeSession(session) {
     createdAt: Number(session.createdAt || Date.now()),
     updatedAt: Number(session.updatedAt || session.createdAt || Date.now()),
     pinnedAt: session.pinnedAt || null,
-    webSearchEnabled: Boolean(session.webSearchEnabled),
+    webSearchEnabled: webSearchMode === "force",
+    webSearchMode,
+    webSearchProviders,
     messages: Array.isArray(session.messages)
       ? session.messages.map((message) => {
           const taskId = String(message.taskId || "");
@@ -134,8 +153,9 @@ function sortSessions(items) {
   });
 }
 
-function newSession(title = "新对话", webSearchEnabled = false) {
+function newSession(title = "新对话", webSearchMode = DEFAULT_WEB_SEARCH_MODE) {
   const now = Date.now();
+  const normalizedMode = normalizeWebSearchMode(webSearchMode);
   return {
     id: crypto.randomUUID(),
     title: title ? title.slice(0, 42) : "新对话",
@@ -143,7 +163,9 @@ function newSession(title = "新对话", webSearchEnabled = false) {
     createdAt: now,
     updatedAt: now,
     pinnedAt: null,
-    webSearchEnabled,
+    webSearchEnabled: normalizedMode === "force",
+    webSearchMode: normalizedMode,
+    webSearchProviders: DEFAULT_WEB_SEARCH_PROVIDERS,
     messages: [],
     attachments: [],
     detachedFiles: [],
@@ -225,14 +247,6 @@ function previousUsageTotal(session) {
     }
     return total + Number(message.usage.total || 0);
   }, 0);
-}
-
-function usageLabel(usage) {
-  if (!usage) {
-    return "";
-  }
-  const normalized = normalizeUsage(usage);
-  return `Turn ${normalized.total} / Total ${normalized.cumulative} tokens`;
 }
 
 function sourceMapFromSources(sources = []) {
@@ -502,7 +516,7 @@ function App() {
   const [input, setInput] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [uploadState, setUploadState] = React.useState({sessionId: null, status: "", running: false});
-  const [draftWebSearchEnabled, setDraftWebSearchEnabled] = React.useState(false);
+  const [draftWebSearchMode, setDraftWebSearchMode] = React.useState(DEFAULT_WEB_SEARCH_MODE);
   const [draggingFiles, setDraggingFiles] = React.useState(false);
   const [userId] = React.useState(loadUserId);
   const messagesRef = React.useRef(null);
@@ -518,7 +532,11 @@ function App() {
     () => sessions.find((session) => session.id === activeSessionId) || null,
     [sessions, activeSessionId],
   );
-  const webSearchEnabled = activeSession ? Boolean(activeSession.webSearchEnabled) : draftWebSearchEnabled;
+  const webSearchProviders = DEFAULT_WEB_SEARCH_PROVIDERS;
+  const webSearchMode = activeSession
+    ? normalizeWebSearchMode(activeSession.webSearchMode, activeSession.webSearchEnabled)
+    : draftWebSearchMode;
+  const webSearchEnabled = webSearchMode === "force";
   const activeUploadStatus = uploadState.sessionId === activeSessionId ? uploadState.status : "";
   const activeUploading = uploadState.sessionId === activeSessionId && uploadState.running;
   const activeTaskMessage = [...(activeSession?.messages || [])]
@@ -700,7 +718,7 @@ function App() {
   }
 
   function createAndActivate(title = "新对话") {
-    const session = newSession(title, draftWebSearchEnabled);
+    const session = newSession(title, draftWebSearchMode);
     setActiveSessionId(session.id);
     commitSessions((current) => [session, ...current]);
     return session;
@@ -710,7 +728,7 @@ function App() {
     setActiveSessionId(null);
     setOpenMenuId(null);
     setSidebarOpen(false);
-    setDraftWebSearchEnabled(false);
+    setDraftWebSearchMode(DEFAULT_WEB_SEARCH_MODE);
   }
 
   function handleSelectSession(sessionId) {
@@ -719,14 +737,19 @@ function App() {
     setSidebarOpen(false);
   }
 
-  function handleToggleWebSearch() {
+  function handleSetWebSearchMode(mode) {
+    const currentMode = activeSession
+      ? normalizeWebSearchMode(activeSession.webSearchMode, activeSession.webSearchEnabled)
+      : draftWebSearchMode;
+    const nextMode = currentMode === "force" && mode === "force" ? DEFAULT_WEB_SEARCH_MODE : normalizeWebSearchMode(mode);
     if (!activeSession) {
-      setDraftWebSearchEnabled((enabled) => !enabled);
+      setDraftWebSearchMode(nextMode);
       return;
     }
     patchSession(activeSession.id, (session) => ({
       ...session,
-      webSearchEnabled: !session.webSearchEnabled,
+      webSearchMode: nextMode,
+      webSearchEnabled: nextMode === "force",
     }));
   }
 
@@ -958,6 +981,8 @@ function App() {
           attachments: requestAttachments,
           detached_files: session.detachedFiles || [],
           web_search: webSearchEnabled,
+          web_search_mode: webSearchMode,
+          web_search_providers: webSearchProviders,
         }),
       });
       if (!response.ok) {
@@ -1161,8 +1186,8 @@ function App() {
           onCancel={cancelTask}
           uploading={activeUploading}
           uploadStatus={activeUploadStatus}
-          webSearchEnabled={webSearchEnabled}
-          onToggleWebSearch={handleToggleWebSearch}
+          webSearchMode={webSearchMode}
+          onSetWebSearchMode={handleSetWebSearchMode}
           attachments={activeSession?.attachments || []}
           onUploadClick={() => fileInputRef.current?.click()}
           onFiles={uploadFiles}
@@ -1411,7 +1436,6 @@ function MessageTurn({message, apiBase}) {
           {!isUser && message.uiBlocks?.length ? <ResearchPathBlocks blocks={message.uiBlocks} /> : null}
         </div>
         <div className={`message-meta ${isUser ? "user-meta" : ""}`}>
-          {!isUser && message.usage ? <span>{usageLabel(message.usage)}</span> : null}
           <CopyButton text={message.content} />
         </div>
       </div>
@@ -1549,8 +1573,8 @@ function Composer({
   onCancel,
   uploading,
   uploadStatus,
-  webSearchEnabled,
-  onToggleWebSearch,
+  webSearchMode,
+  onSetWebSearchMode,
   attachments,
   onUploadClick,
   onFiles,
@@ -1624,16 +1648,43 @@ function Composer({
           </button>
         )}
         <div className="composer-actions">
-          <button
-            className={`composer-mode ${webSearchEnabled ? "active" : ""}`}
-            type="button"
-            onClick={onToggleWebSearch}
-            disabled={disabled}
-            aria-pressed={webSearchEnabled}
-          >
-            <SearchIcon />
-            网络搜索
-          </button>
+          <div className="composer-action-group" aria-label="Search mode">
+            {SEARCH_MODES.map((mode) => {
+              const active = webSearchMode === mode.id;
+              return (
+                <button
+                  className={`composer-mode ${active ? "active" : ""}`}
+                  type="button"
+                  key={mode.id}
+                  onClick={() => onSetWebSearchMode(mode.id)}
+                  disabled={disabled}
+                  aria-pressed={active}
+                  title={`Search mode: ${mode.label}`}
+                >
+                  {mode.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="composer-action-group" aria-label="Search providers">
+          {SEARCH_PROVIDERS.map((provider) => {
+            const active = webSearchProviders.includes(provider.id);
+            return (
+              <button
+                className={`composer-mode ${active ? "active" : ""}`}
+                type="button"
+                key={provider.id}
+                onClick={() => onToggleWebSearchProvider(provider.id)}
+                disabled={disabled}
+                aria-pressed={active}
+                title={`使用 ${provider.label} 搜索`}
+              >
+                <SearchIcon />
+                {provider.label}
+              </button>
+            );
+          })}
+          </div>
         </div>
       </form>
       <p className="composer-hint">OpsAgent 可能会犯错，重要结果请核验。</p>

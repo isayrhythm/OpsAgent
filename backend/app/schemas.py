@@ -32,6 +32,8 @@ class ChatRequest(BaseModel):
     attachments: list[UploadedFileSummary] = Field(default_factory=list)
     detached_files: list[DetachedFileSummary] = Field(default_factory=list)
     web_search: bool = False
+    web_search_mode: Literal["off", "auto", "force"] = "auto"
+    web_search_providers: list[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):

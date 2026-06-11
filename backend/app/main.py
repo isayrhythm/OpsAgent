@@ -10,7 +10,7 @@ from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
 from backend.app.services.differential_protein import DifferentialProteinError, artifact_path
 from backend.app.services.skill_loader import load_skills
-from backend.app.services.task_manager import TaskManager
+from backend.app.agents.task_manager import TaskManager
 from backend.app.services.upload_intake_manager import UploadIntakeManager
 
 
@@ -59,6 +59,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         request.attachments,
         request.detached_files,
         request.web_search,
+        request.web_search_mode,
+        request.web_search_providers,
     )
     return ChatResponse(task_id=task_id, events_url=f"/api/tasks/{task_id}/events")
 

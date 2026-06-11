@@ -3,8 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
-from backend.app.services import agent_graph
-from backend.app.services.router import RouteDecision
+from backend.app.agents import agent_graph
 from backend.app.services.skill_loader import SkillSpec
 
 
@@ -38,12 +37,16 @@ def make_skill(name: str, execution_mode: str) -> SkillSpec:
 
 
 def patch_route(monkeypatch, skill: SkillSpec) -> None:
-    async def route(*_args, **_kwargs) -> RouteDecision:
-        return RouteDecision(skill=skill, skills=[skill], reason="selected")
+    async def route(*_args, **_kwargs):
+        return {
+            "skill_name": skill.name,
+            "skill_names": [skill.name],
+            "skills": [skill],
+            "route_reason": "selected",
+        }
 
-    monkeypatch.setattr(agent_graph, "route_skill", route)
-    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [skill])
-    monkeypatch.setattr(agent_graph, "load_skill", lambda _path: skill)
+    monkeypatch.setattr(agent_graph, "route_registered_skills", route)
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [skill])
 
 
 def test_deterministic_skill_failure_returns_skill_output(monkeypatch) -> None:
@@ -293,11 +296,11 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
 
     async def route(*_args, **_kwargs):
         route_calls["count"] += 1
-        return RouteDecision(skill=None, skills=[], reason="normal chat")
+        return {"skill_name": None, "skill_names": [], "skills": [], "route_reason": "normal chat"}
 
-    async def search(query, **_kwargs):
+    async def search(queries, **_kwargs):
         return {
-            "query": query,
+            "query": queries[0]["query"],
             "results": [
                 {
                     "title": "Example result",
@@ -312,9 +315,9 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
     async def capture(event_type, step, status, data=None) -> None:
         events.append((event_type, step, status, data))
 
-    monkeypatch.setattr(agent_graph, "route_skill", route)
-    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [])
-    monkeypatch.setattr(agent_graph, "search_web", search)
+    monkeypatch.setattr(agent_graph, "route_registered_skills", route)
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [])
+    monkeypatch.setattr(agent_graph, "search_web_queries", search)
 
     llm = SearchLLM()
     graph = agent_graph.build_agent_graph(llm, capture)
@@ -326,6 +329,7 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
                 "attachments": [],
                 "detached_files": [],
                 "web_search": True,
+                "web_search_mode": "force",
             }
         )
     )
@@ -333,7 +337,7 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
     joined_context = "\n".join(message["content"] for message in llm.calls[0])
     assert result["answer"] == "searched answer"
     assert route_calls["count"] == 1
-    assert result["web_sources"] == [
+    assert result["search"]["sources"] == [
         {"index": 1, "title": "Example result", "url": "https://example.com/result"}
     ]
     assert "fresh web context" in joined_context
@@ -355,14 +359,14 @@ def test_web_search_without_sources_still_uses_final_answer_prompt(monkeypatch) 
             yield "searched answer"
 
     async def route(*_args, **_kwargs):
-        return RouteDecision(skill=None, skills=[], reason="normal chat")
+        return {"skill_name": None, "skill_names": [], "skills": [], "route_reason": "normal chat"}
 
-    async def search(query, **_kwargs):
-        return {"query": query, "results": []}
+    async def search(queries, **_kwargs):
+        return {"query": queries[0]["query"], "results": []}
 
-    monkeypatch.setattr(agent_graph, "route_skill", route)
-    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [])
-    monkeypatch.setattr(agent_graph, "search_web", search)
+    monkeypatch.setattr(agent_graph, "route_registered_skills", route)
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [])
+    monkeypatch.setattr(agent_graph, "search_web_queries", search)
 
     llm = SearchLLM()
     graph = agent_graph.build_agent_graph(llm, emit)
@@ -374,6 +378,7 @@ def test_web_search_without_sources_still_uses_final_answer_prompt(monkeypatch) 
                 "attachments": [],
                 "detached_files": [],
                 "web_search": True,
+                "web_search_mode": "force",
             }
         )
     )
@@ -637,10 +642,10 @@ def test_attachment_chat_prompt_exposes_intake_warnings_and_action_guard(monkeyp
             yield "grounded file answer"
 
     async def route(*_args, **_kwargs):
-        return RouteDecision(skill=None, skills=[], reason="inspect intake summary")
+        return {"skill_name": None, "skill_names": [], "skills": [], "route_reason": "inspect intake summary"}
 
-    monkeypatch.setattr(agent_graph, "route_skill", route)
-    monkeypatch.setattr(agent_graph, "load_skill_catalog", lambda: [])
+    monkeypatch.setattr(agent_graph, "route_registered_skills", route)
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [])
     attachment = UploadedFileSummary(
         file_id="rank",
         filename="rank.csv",
