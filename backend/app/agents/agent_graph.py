@@ -126,7 +126,6 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         return {"skills": skills}
 
     async def route_node(state: AgentState) -> AgentState:
-        await emit("progress", 3, "正在路由请求", None)
         selection = await route_registered_skills(
             message=state["message"],
             skills=state.get("skills", []),
@@ -138,16 +137,10 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
         if not selection.get("skills"):
             await emit("progress", 4, "使用普通对话模式", None)
             return selection
-        await emit(
-            "progress",
-            4,
-            "正在调用专门能力",
-            None,
-        )
         return selection
 
     async def run_one_skill(skill: SkillSpec, state: AgentState) -> dict[str, Any]:
-        await emit("progress", 5, f"正在调用 {skill.name} 智能体", {"agent": skill.name, "agent_state": "running"})
+        await emit("progress", 5, f"正在调用 {skill.name}", {"agent": skill.name, "agent_state": "running"})
         try:
             skill_output = await execute_skill(
                 state["message"],
@@ -178,7 +171,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 error=first_error,
             )
             if evaluation.get("category") != "retry_code" or skill.execution_mode.startswith("deterministic"):
-                await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+                await emit("progress", 5, f"{skill.name} 已完成", {"agent": skill.name, "agent_state": "done"})
                 return {
                     "skill_name": skill.name,
                     "output": {
@@ -192,7 +185,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             await emit(
                 "progress",
                 5,
-                f"正在重新调用 {skill.name} 智能体",
+                f"正在重新调用 {skill.name}",
                 {"agent": skill.name, "agent_state": "running", "retry": True, "reason": evaluation.get("reason")},
             )
             try:
@@ -208,7 +201,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 skill_output = enrich_skill_output_with_id_mapping(skill_output)
             except Exception as retry_exc:
                 retry_code = retry_exc.code if isinstance(retry_exc, SkillCodeExecutionError) else None
-                await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+                await emit("progress", 5, f"{skill.name} 已完成", {"agent": skill.name, "agent_state": "done"})
                 return {
                     "skill_name": skill.name,
                     "output": {
@@ -232,7 +225,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 llm=llm,
             )
             skill_output["evaluation"] = evaluation
-            await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+            await emit("progress", 5, f"{skill.name} 已完成", {"agent": skill.name, "agent_state": "done"})
             return {"skill_name": skill.name, "output": skill_output}
 
         if evaluation.get("category") == "retry_code" and skill.execution_mode.startswith("deterministic"):
@@ -241,14 +234,14 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 "category": "partial",
                 "retry_instruction": "",
             }
-            await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+            await emit("progress", 5, f"{skill.name} 已完成", {"agent": skill.name, "agent_state": "done"})
             return {"skill_name": skill.name, "output": skill_output}
 
         if evaluation.get("category") == "retry_code":
             await emit(
                 "progress",
                 5,
-                f"正在重新调用 {skill.name} 智能体",
+                f"正在重新调用 {skill.name}",
                 {"agent": skill.name, "agent_state": "running", "retry": True, "reason": evaluation.get("reason")},
             )
             try:
@@ -264,7 +257,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 skill_output = enrich_skill_output_with_id_mapping(skill_output)
             except Exception as retry_exc:
                 retry_code = retry_exc.code if isinstance(retry_exc, SkillCodeExecutionError) else None
-                await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+                await emit("progress", 5, f"{skill.name} 已完成", {"agent": skill.name, "agent_state": "done"})
                 return {
                     "skill_name": skill.name,
                     "output": {
@@ -288,7 +281,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                 llm=llm,
             )
         skill_output["evaluation"] = evaluation
-        await emit("progress", 5, f"{skill.name} 智能体已完成", {"agent": skill.name, "agent_state": "done"})
+        await emit("progress", 5, f"{skill.name} 已完成", {"agent": skill.name, "agent_state": "done"})
         return {"skill_name": skill.name, "output": skill_output}
 
     async def execute_node(state: AgentState) -> AgentState:

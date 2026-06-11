@@ -497,9 +497,9 @@ function agentStatus(payload, activeAgents) {
   }
   if (agents.length === 1) {
     const [name, isRetry] = agents[0];
-    return isRetry ? `正在重新调用 ${name} 智能体` : `正在调用 ${name} 智能体`;
+    return isRetry ? `正在重新调用 ${name}` : `正在调用 ${name}`;
   }
-  return `正在调用 ${agents.length} 个智能体：${agents.map(([name]) => name).join("、")}`;
+  return `正在调用 ${agents.length} 个能力：${agents.map(([name]) => name).join("、")}`;
 }
 
 function App() {

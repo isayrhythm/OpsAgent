@@ -155,7 +155,7 @@ async def generate_skill_code(
         },
     ]
     response = ""
-    status_text = f"正在重新调用 {skill.name} 智能体" if is_retry else f"正在调用 {skill.name} 智能体"
+    status_text = f"正在重新调用 {skill.name}" if is_retry else f"正在调用 {skill.name}"
     async for delta in llm.stream_chat(
         messages,
         model=llm.settings.code_model,
