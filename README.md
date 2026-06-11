@@ -7,7 +7,7 @@ OpsAgent 是一个 LangGraph + FastAPI + React + Skill contract 的最小可运�
 ```text
 主 Agent
   -> 路由普通回答
-  -> 调用单个或多个 Skill
+  -> 使用单个或多个 Skill
   -> 进入 Deep Research Graph
        -> 规划任务
        -> 校验计划
@@ -72,7 +72,6 @@ OPSAGENT_EXECUTION_TIMEOUT_SECONDS=20
 OPSAGENT_MEMORY_DIR=memory
 ```
 
-密钥只放在 `.env`，不要提交到仓库。
 
 ## 启动
 
@@ -115,7 +114,7 @@ http://127.0.0.1:8001/api/health
 
 ## Skill Contract
 
-每个 Skill 是一个 `skill/*.md` 文件，文件头部使用 frontmatter 描述能力边界。Deep Research planner 会读取这些元信息，把 Skill 纳入计划编排。下面的 gene info 只是当前项目里的示例 Skill。
+每个 Skill 是一个 `skill/*.md` 文件，文件头部使用 frontmatter 描述能力边界。Router / Deep Research planner 会读取这些元信息，把 Skill 纳入计划编排。
 
 示例：
 
@@ -165,19 +164,6 @@ classify_intent
   -> synthesize_answer
 ```
 
-计划节点会在前端以紧凑列表展示：
-
-```text
-■ 公共文献搜索：水稻耐盐基因与功能
-  Search Query Rewriter  Tavily Search  Quark Search
-
-■ 本地数据库查询：耐盐相关基因
-  trait2gene_query
-
-■ 关键基因详细信息查询
-  query_gene_info
-```
-
 后端会把上游步骤结果传给下游步骤。例如 `trait2gene_query` 得到的候选基因，会进入后续 `query_gene_info` 的输入上下文。
 
 ## 测试
@@ -194,13 +180,6 @@ python -m pdm run test
 npm --prefix frontend run build
 ```
 
-常用真实测试题：
-
-```text
-深度研究一下水稻耐盐相关基因有哪些？他们有什么功能？
-深度研究 COLD1 基因和水稻耐冷性的关系，结合本地数据库和公开文献。
-深度研究一下大豆产量相关基因有哪些？挑几个候选基因说明功能。
-```
 
 ## 当前边界
 
