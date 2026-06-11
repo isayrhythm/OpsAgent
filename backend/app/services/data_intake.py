@@ -10,7 +10,7 @@ import pandas as pd
 from pypdf import PdfReader
 
 from backend.app.schemas import UploadedFileSummary
-from backend.app.services.blast_query import (
+from backend.app.skill_tools.blast_query import (
     FASTA_SUFFIXES,
     MAX_QUERY_SEQUENCES,
     detect_sequence_type,

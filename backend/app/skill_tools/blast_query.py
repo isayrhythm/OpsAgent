@@ -14,7 +14,7 @@ from typing import Any
 from backend.app.config import DATA_DIR
 from backend.app.schemas import UploadedFileSummary
 from backend.app.services.deepseek_client import DeepSeekClient
-from backend.app.services.gene_info_lookup import enrich_blast_hits
+from backend.app.skill_tools.gene_info_lookup import enrich_blast_hits
 
 
 BLAST_DB_ROOT = DATA_DIR / "blast_db"

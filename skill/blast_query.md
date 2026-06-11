@@ -9,6 +9,7 @@ argument_resolver: message
 input_schema: skill/schemas/blast_query.input.json
 output_schema: skill/schemas/blast_query.output.json
 data_paths: data/blast_db/Arabidopsis/nt, data/blast_db/Arabidopsis/protein, data/blast_db/Maize/nt, data/blast_db/Maize/protein, data/blast_db/Rice/nt, data/blast_db/Rice/protein, data/blast_db/Soybean/nt, data/blast_db/Soybean/protein
+answer_requirements: Group BLAST results by query_label and present candidate homologous records in concise tables.; Include subject_id, species, record_type, program, identity, query_coverage, evalue, and bitscore.; Include resolved canonical gene ID and compact local gene function summary when gene_info.matched is true.; If gene_info.matched is false, say no local functional annotation was resolved and do not invent a function.; Mention queries with no passing hit and any execution errors.
 ---
 
 # BLAST Query Skill

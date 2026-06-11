@@ -9,6 +9,7 @@ argument_resolver: message
 input_schema: skill/schemas/trait2gene_query.input.json
 output_schema: skill/schemas/trait2gene_query.output.json
 data_paths: data/trait2gene/ath_trait2gene_paper_tair_3.csv, data/trait2gene/genedb_172traitCategroy_v3.csv, data/trait2gene/maize_db_trait158_v5.csv, data/trait2gene/SoyGeneDB_trait164_v2.csv
+answer_requirements: Use only literature, source, evidence, and references returned in this result.; For reported trait-associated genes, include literature evidence when available.; Do not invent paper titles, authors, years, DOI, or sources.; If no genes were found, clearly say the current local trait2gene database has no matching record.
 ---
 
 # Trait2Gene Query Skill

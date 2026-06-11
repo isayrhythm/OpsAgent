@@ -33,6 +33,7 @@ def make_skill(name: str, execution_mode: str) -> SkillSpec:
         data_paths=[],
         path=Path(f"skill/{name}.md"),
         content="",
+        answer_requirements=[],
     )
 
 
@@ -400,6 +401,17 @@ def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypa
             yield "phenotype answer"
 
     skill = make_skill("gene_phenotype_prediction", "deterministic_python")
+    skill = SkillSpec(
+        name=skill.name,
+        description=skill.description,
+        version=skill.version,
+        trigger=skill.trigger,
+        execution_mode=skill.execution_mode,
+        data_paths=skill.data_paths,
+        path=skill.path,
+        content=skill.content,
+        answer_requirements=["Present phenotype predictions in a concise table."],
+    )
     patch_route(monkeypatch, skill)
 
     async def execute(*_args, **_kwargs):
@@ -471,6 +483,7 @@ def test_phenotype_prediction_result_keeps_predictions_for_final_answer(monkeypa
     assert "rice_blast_resistance" in payload
     assert "gene_mappings" in payload
     assert "id_mapping_summary" in payload
+    assert "Present phenotype predictions in a concise table." in payload
     assert "ID mapping applied: LOC_Os07g48050 -> AGIS_Os07g043560" in payload
     assert "AGIS_Os07g043560" in payload
     assert "<truncated>" not in payload

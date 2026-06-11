@@ -9,6 +9,7 @@ argument_resolver: message
 input_schema: skill/schemas/gene_phenotype_prediction.input.json
 output_schema: skill/schemas/gene_phenotype_prediction.output.json
 data_paths: data/GenePredictor/maize_lte_result.parquet, data/GenePredictor/rice_lte_result.parquet, data/GenePredictor/maize_lte_result.csv, data/GenePredictor/rice_lte_result.csv, data/gene_trans/maize_gene_trans.json, data/gene_trans/rice_gene_trans.json
+answer_requirements: Present phenotype predictions in a concise table.; Include input gene, species, canonical_id, phenotype, rank, and pred_score.; If ID mapping was applied, mention the mapping relationship.; If no prediction was found, state that the gene is not collected in the local GenePredictor result and do not invent phenotypes.
 ---
 
 # Gene Phenotype Prediction Skill

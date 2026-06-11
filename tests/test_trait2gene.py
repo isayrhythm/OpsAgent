@@ -2,10 +2,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from backend.app.services import trait2gene
+from backend.app.skill_tools import trait2gene
 from backend.app.services.code_executor import execute_skill
 from backend.app.services.skill_loader import load_skill
-from backend.app.services.trait2gene import TraitDataset
+from backend.app.skill_tools.trait2gene import TraitDataset
 
 
 class FakeSettings:

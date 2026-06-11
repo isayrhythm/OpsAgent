@@ -1,7 +1,7 @@
 import csv
 
-from backend.app.services import gene_function_research_path
-from backend.app.services.gene_function_research_path import parse_research_path_steps, run_gene_function_research_path_query
+from backend.app.skill_tools import gene_function_research_path
+from backend.app.skill_tools.gene_function_research_path import parse_research_path_steps, run_gene_function_research_path_query
 
 
 MARKDOWN = """

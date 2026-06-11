@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from backend.app.schemas import UploadedFileSummary
-from backend.app.services.differential_transcriptomics import (
+from backend.app.skill_tools.differential_transcriptomics import (
     _analysis_parameters,
     _choose_comparisons,
     _cluster_heatmap_rows,
@@ -160,8 +160,8 @@ def test_transcriptomics_analysis_retries_with_repaired_counts_matrix(tmp_path: 
         ).to_csv(output_dir / f"{slug}_all_genes.csv", index=False)
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("backend.app.services.differential_transcriptomics._find_rscript", lambda: Path("Rscript"))
-    monkeypatch.setattr("backend.app.services.differential_transcriptomics.subprocess.run", fake_run)
+    monkeypatch.setattr("backend.app.skill_tools.differential_transcriptomics._find_rscript", lambda: Path("Rscript"))
+    monkeypatch.setattr("backend.app.skill_tools.differential_transcriptomics.subprocess.run", fake_run)
 
     result = run_differential_transcriptomics_analysis(
         [attachment],

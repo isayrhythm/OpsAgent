@@ -24,6 +24,7 @@ class SkillSpec:
     output_schema_path: str = ""
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
+    answer_requirements: list[str] | None = None
 
 
 def _parse_frontmatter(text: str) -> dict[str, str]:
@@ -44,6 +45,10 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
 
 def _parse_csv_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_requirement_list(value: str) -> list[str]:
+    return [item.strip() for item in value.split(";") if item.strip()]
 
 
 def _load_schema(value: str) -> tuple[str, dict[str, Any] | None]:
@@ -81,6 +86,7 @@ def _skill_from_path(path: Path, *, include_content: bool) -> SkillSpec | None:
         output_schema_path=output_schema_path,
         input_schema=input_schema,
         output_schema=output_schema,
+        answer_requirements=_parse_requirement_list(meta.get("answer_requirements", "")),
         path=path,
         content=content if include_content else "",
     )

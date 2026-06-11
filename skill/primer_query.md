@@ -9,6 +9,7 @@ argument_resolver: message
 input_schema: skill/schemas/primer_query.input.json
 output_schema: skill/schemas/primer_query.output.json
 data_paths: data/primers/clone.parquet, data/primers/mutant.parquet, data/primers/qpcr.parquet, data/gene_trans/ath_gene_trans.json, data/gene_trans/rice_gene_trans.json, data/gene_trans/maize_gene_trans.json, data/gene_trans/soy_gene_trans.json
+answer_requirements: Present primer pairs in a concise Markdown table.; Include forward_sequence, reverse_sequence, and product_length for each primer pair.; Mention that product_length is the precomputed PCR amplicon length.; If no primer was found, use the returned reason and do not invent primer sequences.
 ---
 
 # Primer Query Skill

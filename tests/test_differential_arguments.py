@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from backend.app.services.differential_arguments import resolve_differential_arguments
+from backend.app.skill_tools.differential_arguments import resolve_differential_arguments
 
 
 class JsonLLM:

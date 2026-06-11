@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from backend.app.schemas import UploadedFileSummary
-from backend.app.services import blast_query
-from backend.app.services.blast_query import QuerySequence, classify_blast_query, extract_query_sequences, run_blast_query
+from backend.app.skill_tools import blast_query
+from backend.app.skill_tools.blast_query import QuerySequence, classify_blast_query, extract_query_sequences, run_blast_query
 from backend.app.services.code_executor import execute_skill
 from backend.app.services.skill_loader import load_skill
 

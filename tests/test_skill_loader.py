@@ -13,6 +13,7 @@ description: Demo skill
 trigger: demo trigger
 execution_mode: generated_python
 data_paths: data/a.csv, data/b.csv
+answer_requirements: Show a table.; Do not invent data.
 ---
 
 # Body
@@ -27,6 +28,7 @@ data_paths: data/a.csv, data/b.csv
     assert skills[0].version == "2"
     assert skills[0].trigger == "demo trigger"
     assert skills[0].data_paths == ["data/a.csv", "data/b.csv"]
+    assert skills[0].answer_requirements == ["Show a table.", "Do not invent data."]
     assert skills[0].content == ""
 
 

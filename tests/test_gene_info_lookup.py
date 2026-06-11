@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from backend.app.services import gene_info_lookup
-from backend.app.services.gene_info_lookup import clear_gene_info_lookup_cache, enrich_blast_hits, resolve_gene_record
+from backend.app.skill_tools import gene_info_lookup
+from backend.app.skill_tools.gene_info_lookup import clear_gene_info_lookup_cache, enrich_blast_hits, resolve_gene_record
 
 
 def patch_gene_info_data(monkeypatch, tmp_path: Path) -> None:

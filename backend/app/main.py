@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
-from backend.app.services.differential_protein import DifferentialProteinError, artifact_path
+from backend.app.skill_tools.differential_protein import DifferentialProteinError, artifact_path
 from backend.app.services.skill_loader import load_skills
 from backend.app.agents.task_manager import TaskManager
 from backend.app.services.upload_intake_manager import UploadIntakeManager

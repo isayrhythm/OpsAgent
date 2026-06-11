@@ -2,7 +2,7 @@ import json
 
 import pandas as pd
 
-from backend.app.services import gene_mutant_query
+from backend.app.skill_tools import gene_mutant_query
 
 
 def test_gene_mutant_query_resolves_rice_alias_and_queries_bgbio(tmp_path, monkeypatch):

@@ -6,17 +6,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
-from backend.app.services.blast_query import classify_blast_query, run_blast_query
+from backend.app.skill_tools.blast_query import classify_blast_query, run_blast_query
 from backend.app.services.deepseek_client import DeepSeekClient
-from backend.app.services.differential_arguments import resolve_differential_arguments
-from backend.app.services.differential_protein import run_differential_protein_analysis
-from backend.app.services.differential_transcriptomics import run_differential_transcriptomics_analysis
-from backend.app.services.gene_function_research_path import run_gene_function_research_path_query
-from backend.app.services.gene_mutant_query import run_gene_mutant_query
-from backend.app.services.gene_phenotype_prediction import run_gene_phenotype_prediction
-from backend.app.services.primer_query import classify_primer_query, run_primer_query
+from backend.app.skill_tools.differential_arguments import resolve_differential_arguments
+from backend.app.skill_tools.differential_protein import run_differential_protein_analysis
+from backend.app.skill_tools.differential_transcriptomics import run_differential_transcriptomics_analysis
+from backend.app.skill_tools.gene_function_research_path import run_gene_function_research_path_query
+from backend.app.skill_tools.gene_mutant_query import run_gene_mutant_query
+from backend.app.skill_tools.gene_phenotype_prediction import run_gene_phenotype_prediction
+from backend.app.skill_tools.primer_query import classify_primer_query, run_primer_query
 from backend.app.services.skill_loader import SkillSpec
-from backend.app.services.trait2gene import classify_trait2gene_query, run_trait2gene_query
+from backend.app.skill_tools.trait2gene import classify_trait2gene_query, run_trait2gene_query
 
 
 Emit = Callable[[str, int, str, Any | None], Awaitable[None]]

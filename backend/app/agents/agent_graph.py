@@ -424,6 +424,7 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
             web_search_data = await build_web_context(state)
             await emit_web_sources(web_search_data)
             web_context = web_search_data["context"]
+            skills_by_name = {skill.name: skill for skill in state.get("skills", [])}
             messages = [
                 {
                     "role": "system",
@@ -450,11 +451,20 @@ def build_agent_graph(llm: DeepSeekClient, emit: Emit):
                                 "sources": web_search_data["sources"],
                                 "plan": web_search_data.get("plan"),
                             },
-                            "skill_name": state["skill_name"],
+                            "skill_name": state.get("skill_name"),
                             "skill_names": state.get("skill_names", []),
-                            "skill_output": answer_ready_output(skill_output),
+                            "skill_output": answer_ready_output(
+                                skill_output,
+                                skills_by_name.get(str(state.get("skill_name") or "")),
+                            ),
                             "skill_outputs": [
-                                {**item, "output": answer_ready_output(item.get("output"))}
+                                {
+                                    **item,
+                                    "output": answer_ready_output(
+                                        item.get("output"),
+                                        skills_by_name.get(str(item.get("skill_name") or "")),
+                                    ),
+                                }
                                 if isinstance(item, dict)
                                 else compact_value(item)
                                 for item in skill_outputs

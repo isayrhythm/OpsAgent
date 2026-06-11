@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from backend.app.services import primer_query
+from backend.app.skill_tools import primer_query
 from backend.app.services.code_executor import execute_skill
-from backend.app.services.primer_query import classify_primer_query, run_primer_query
+from backend.app.skill_tools.primer_query import classify_primer_query, run_primer_query
 from backend.app.services.skill_loader import load_skill
 
 

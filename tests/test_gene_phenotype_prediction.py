@@ -1,6 +1,6 @@
 import json
 
-from backend.app.services import gene_phenotype_prediction as predictor
+from backend.app.skill_tools import gene_phenotype_prediction as predictor
 
 
 def test_gene_phenotype_prediction_uses_mapping_and_top_k(tmp_path, monkeypatch):

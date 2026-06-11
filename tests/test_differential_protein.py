@@ -1,4 +1,4 @@
-from backend.app.services.differential_protein import (
+from backend.app.skill_tools.differential_protein import (
     _analysis_parameters,
     _choose_comparisons,
     _cluster_heatmap_rows,
