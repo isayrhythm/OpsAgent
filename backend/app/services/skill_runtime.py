@@ -8,6 +8,7 @@ from typing import Any
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.skill_tools.blast_query import classify_blast_query, run_blast_query
 from backend.app.llm.deepseek import DeepSeekClient
+from backend.app.services.message_context import build_skill_message_with_context
 from backend.app.tools.file_context import profile_uploaded_files, transform_attachments_for_skill
 from backend.app.skill_tools.differential_arguments import resolve_differential_arguments
 from backend.app.skill_tools.differential_protein import run_differential_protein_analysis
@@ -126,29 +127,7 @@ async def _resolve_invocation(skill: SkillSpec, context: SkillExecutionContext) 
 
 
 def _message_with_recent_focus(context: SkillExecutionContext) -> str:
-    focus = _recent_focus(context.history)
-    if not focus["last_user_message"] and not focus["last_assistant_message"]:
-        return context.message
-    return (
-        f"当前用户请求：{context.message}\n"
-        f"上一轮用户请求：{focus['last_user_message']}\n"
-        f"上一轮助手回复：{focus['last_assistant_message']}"
-    )
-
-
-def _recent_focus(history: list[ChatHistoryMessage]) -> dict[str, str]:
-    focus = {"last_user_message": "", "last_assistant_message": ""}
-    for item in reversed(history):
-        content = str(item.content or "").strip()
-        if not content:
-            continue
-        if item.role == "user" and not focus["last_user_message"]:
-            focus["last_user_message"] = content
-        elif item.role in {"assistant", "agent"} and not focus["last_assistant_message"]:
-            focus["last_assistant_message"] = content
-        if focus["last_user_message"] and focus["last_assistant_message"]:
-            break
-    return focus
+    return build_skill_message_with_context(context.message, context.history)
 
 
 async def _run_gene_function_research_path(

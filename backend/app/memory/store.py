@@ -60,7 +60,7 @@ class MemoryStore:
         payload = json.loads(path.read_text(encoding="utf-8"))
         messages = payload.get("messages", [])
         return [
-            ChatHistoryMessage(role=item["role"], content=item["content"])
+            ChatHistoryMessage(role=item["role"], content=item.get("context_content") or item["content"])
             for item in messages[-limit:]
             if item.get("role") in {"user", "assistant", "agent"} and item.get("content")
         ]
@@ -72,6 +72,7 @@ class MemoryStore:
         user_message: str,
         answer: str,
         attachments: list[UploadedFileSummary] | None = None,
+        tool_trace_context: str | None = None,
     ) -> None:
         self.ensure_user_dirs(user_id)
         path = self.paths.conversation_path(user_id, session_id)
@@ -94,10 +95,15 @@ class MemoryStore:
             if pdf_context:
                 stored_user_message = f"{user_message}\n\n{pdf_context}"
 
+        assistant_message = {"role": "assistant", "content": answer, "created_at": _now()}
+        if tool_trace_context:
+            # content 是用户实际看到的回答；context_content 只给下一轮模型补充轻量工具轨迹。
+            assistant_message["context_content"] = f"{answer}\n\n{tool_trace_context}"
+
         payload.setdefault("messages", []).extend(
             [
                 {"role": "user", "content": stored_user_message, "created_at": _now()},
-                {"role": "assistant", "content": answer, "created_at": _now()},
+                assistant_message,
             ]
         )
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

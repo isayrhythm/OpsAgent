@@ -55,7 +55,7 @@ def test_file_inspector_profiles_table_shape_without_binding_analysis_skill() ->
     assert profile["status"] == "profiled"
     assert profile["file_kind"] == "table"
     assert profile["data_type"] == "table"
-    assert profile["recommended_skills"] == []
+    assert "recommended_skills" not in profile
     assert "standard_files" not in profile
     assert "Protein.Names" in profile["columns"]
     assert profile["possible_sample_groups"]["WT"] == ["WT1-Y", "WT2-Y", "WT3-Y"]

@@ -2,7 +2,7 @@ import asyncio
 
 from backend.app.schemas import ChatHistoryMessage
 from backend.app.tools import web_search
-from backend.app.tools.web_search import format_web_search_context, web_search_sources
+from backend.app.tools.web_search import WEB_SEARCH_ANSWER_REQUIREMENTS, format_web_search_context, web_search_sources
 
 
 def test_format_web_search_context_includes_sources() -> None:
@@ -44,6 +44,14 @@ def test_web_search_sources_keeps_numbered_urls() -> None:
         {"index": 1, "title": "First", "url": "https://example.com/1"},
         {"index": 3, "title": "Third", "url": "https://example.com/3"},
     ]
+
+
+def test_web_search_answer_requirements_define_source_citations() -> None:
+    joined = " ".join(WEB_SEARCH_ANSWER_REQUIREMENTS)
+
+    assert "web_search.sources" in joined
+    assert "[1]" in joined
+    assert "Do not cite indexes" in joined
 
 
 def test_quark_search_normalizes_results_and_sends_history(monkeypatch) -> None:

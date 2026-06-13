@@ -24,6 +24,14 @@ class WebSearchError(RuntimeError):
     pass
 
 
+WEB_SEARCH_ANSWER_REQUIREMENTS = [
+    "If web_search.context and web_search.sources are present, treat them as evidence from this turn's web search.",
+    "When summarizing web search evidence, cite the relevant sentence with existing source indexes from web_search.sources, using [1], [2], or [1][3].",
+    "Do not cite indexes that are not present in web_search.sources.",
+    "Do not invent source titles, URLs, authors, dates, or findings that are not present in web_search.context.",
+]
+
+
 # 搜索是外部 I/O，timeout、网络抖动、429、5xx 可以重试。
 # 认证、配置、请求格式错误要快速失败，不做无意义重试。
 SEARCH_RETRY_POLICY = ToolRetryPolicy(

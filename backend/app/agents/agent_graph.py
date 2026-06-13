@@ -22,7 +22,12 @@ from backend.app.services.result_evaluator import compact_value, evaluate_skill_
 from backend.app.tools.command_tool import COMMAND_TOOL_NAME, command_tool_spec, execute_shell_command, plan_shell_command
 from backend.app.tools.file_context import ensure_attachment_intakes, profile_uploaded_files, uploaded_files_prompt
 from backend.app.tools.tool_runner import ToolRetryPolicy, run_tool
-from backend.app.tools.web_search import format_web_search_context, search_web_queries, web_search_sources
+from backend.app.tools.web_search import (
+    WEB_SEARCH_ANSWER_REQUIREMENTS,
+    format_web_search_context,
+    search_web_queries,
+    web_search_sources,
+)
 from backend.app.tools.web_search_planner import normalize_web_search_mode, plan_web_search
 
 
@@ -95,5 +100,6 @@ def _deps() -> SimpleNamespace:
         should_route_deep_research=should_route_deep_research,
         ui_block_events=ui_block_events,
         uploaded_files_prompt=uploaded_files_prompt,
+        web_search_answer_requirements=WEB_SEARCH_ANSWER_REQUIREMENTS,
         web_search_sources=web_search_sources,
     )

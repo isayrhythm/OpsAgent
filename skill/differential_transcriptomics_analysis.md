@@ -9,6 +9,7 @@ argument_resolver: differential_analysis_json
 input_schema: skill/schemas/differential_transcriptomics_analysis.input.json
 output_schema: skill/schemas/differential_transcriptomics_analysis.output.json
 data_paths: uploaded transcriptomics counts expression matrix
+answer_requirements: If report_url is present, always include it as a Markdown link named HTML report.; Mention every analyzed comparison and the padj/log2FoldChange thresholds actually used.; Summarize significant/up/down gene counts for each comparison when available.; If report_url is missing, explicitly say the HTML report was not generated and include available CSV output paths instead.; Do not invent plots, comparisons, thresholds, or output files that are not present in the skill result.
 ---
 
 # Differential Transcriptomics Analysis Skill

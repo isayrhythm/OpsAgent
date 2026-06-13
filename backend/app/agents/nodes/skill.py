@@ -92,6 +92,7 @@ def make_execute_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                 previous_error=first_error,
                 evaluation=evaluation,
                 emit=emit,
+                history=state.get("history", []),
             )
             skill_output = deps.enrich_skill_output_with_id_mapping(skill_output)
         except Exception as retry_exc:
@@ -144,6 +145,7 @@ def make_execute_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                 previous_result=skill_output.get("result"),
                 evaluation=evaluation,
                 emit=emit,
+                history=state.get("history", []),
             )
             retried_output = deps.enrich_skill_output_with_id_mapping(retried_output)
         except Exception as retry_exc:

@@ -1143,6 +1143,8 @@ function App() {
         return {
           ...messageItem,
           content,
+          contextContent: payload.data?.history_context || messageItem.contextContent || content,
+          toolTrace: payload.data?.tool_trace || messageItem.toolTrace || null,
           webSources: payload.data?.web_sources || sourceCacheRef.current.get(messageId) || messageItem.webSources || [],
           researchPlan:
             normalizeResearchPlan({

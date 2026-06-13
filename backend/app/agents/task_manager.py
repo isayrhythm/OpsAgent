@@ -9,6 +9,7 @@ from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.schemas import TaskEvent
 from backend.app.agents.agent_graph import build_agent_graph
+from backend.app.agents.tool_trace import append_tool_trace_to_context, build_tool_trace, format_tool_trace_context
 from backend.app.llm.deepseek import DeepSeekClient
 
 
@@ -115,6 +116,9 @@ class TaskManager:
             search_result = result.get("search") if isinstance(result.get("search"), dict) else {}
             search_result = {key: value for key, value in search_result.items() if key != "task"}
             research_result = result.get("research") if isinstance(result.get("research"), dict) else {}
+            tool_trace = build_tool_trace(state.events, result)
+            tool_trace_context = format_tool_trace_context(tool_trace)
+            history_context = append_tool_trace_to_context(answer, tool_trace_context)
             if state.session_id and answer:
                 self._memory.append_exchange(
                     state.user_id,
@@ -122,6 +126,7 @@ class TaskManager:
                     state.message,
                     answer,
                     result.get("attachments") or state.attachments,
+                    tool_trace_context=tool_trace_context,
                 )
             await self._emit(
                 state,
@@ -134,6 +139,9 @@ class TaskManager:
                     "skill_output": result.get("skill_output"),
                     "skill_outputs": result.get("skill_outputs"),
                     "answer": answer,
+                    "history_context": history_context,
+                    "tool_trace": tool_trace,
+                    "tool_trace_context": tool_trace_context,
                     "web_sources": research_result.get("sources") or search_result.get("sources") or result.get("web_sources") or [],
                     "mode": "deep_research"
                     if research_result

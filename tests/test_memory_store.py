@@ -88,3 +88,21 @@ def test_memory_store_persists_pdf_context_in_hidden_history(tmp_path) -> None:
     assert "总结这篇 PDF" in history[0].content
     assert "PDF 文献上下文" in history[0].content
     assert "HY2 regulates photomorphogenesis" in history[0].content
+
+
+def test_memory_store_loads_tool_trace_from_hidden_assistant_context(tmp_path) -> None:
+    store = MemoryStore(MemoryPaths(root=tmp_path))
+
+    store.append_exchange(
+        "user-a",
+        "session-a",
+        "查这个基因",
+        "查到了。",
+        tool_trace_context="上一轮工具调用摘要：\n- query_gene_info [skill]: completed；LOC_Os07g48050",
+    )
+    conversation = json.loads(store.paths.conversation_path("user-a", "session-a").read_text(encoding="utf-8"))
+    history = store.load_history("user-a", "session-a")
+
+    assert conversation["messages"][1]["content"] == "查到了。"
+    assert "query_gene_info" in conversation["messages"][1]["context_content"]
+    assert "LOC_Os07g48050" in history[1].content

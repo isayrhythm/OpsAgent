@@ -42,6 +42,7 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
             "sources": deps.web_search_sources(search_result),
             "plan": search_plan,
             "enabled": True,
+            "answer_requirements": deps.web_search_answer_requirements,
         }
 
     async def emit_web_sources(search_data: dict[str, Any]) -> None:
@@ -93,6 +94,7 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                                         "context": web_context,
                                         "sources": web_search_data["sources"],
                                         "plan": web_search_data.get("plan"),
+                                        "answer_requirements": web_search_data.get("answer_requirements", []),
                                     },
                                     "skill_name": None,
                                     "skill_names": [],
@@ -168,6 +170,7 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                                 "context": web_context,
                                 "sources": web_search_data["sources"],
                                 "plan": web_search_data.get("plan"),
+                                "answer_requirements": web_search_data.get("answer_requirements", []),
                             },
                             "skill_name": state.get("skill_name"),
                             "skill_names": state.get("skill_names", []),

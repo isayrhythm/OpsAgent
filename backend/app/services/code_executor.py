@@ -12,9 +12,10 @@ from typing import Any, Awaitable, Callable
 from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
 from backend.app.llm.calls import complete_text
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
-from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
+from backend.app.schemas import UploadedFileSummary
 from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.id_mapping import enrich_skill_output_with_id_mapping
+from backend.app.services.message_context import build_skill_message_with_context
 from backend.app.services.result_evaluator import compact_value
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.services.skill_runtime import SkillContractError, SkillExecutionContext, execute_registered_skill
@@ -25,28 +26,6 @@ MAX_RETRY_FEEDBACK_CHARS = 8000
 
 FORBIDDEN_IMPORTS = {"os", "subprocess", "shutil", "socket", "pathlib"}
 FORBIDDEN_NAMES = {"eval", "exec", "compile", "open", "__import__"}
-
-
-def _message_with_recent_focus(message: str, history: list[ChatHistoryMessage] | list[Any]) -> str:
-    focus = {"last_user_message": "", "last_assistant_message": ""}
-    for item in reversed(history):
-        content = str(getattr(item, "content", "") or "").strip()
-        role = str(getattr(item, "role", "") or "")
-        if not content:
-            continue
-        if role == "user" and not focus["last_user_message"]:
-            focus["last_user_message"] = content
-        elif role in {"assistant", "agent"} and not focus["last_assistant_message"]:
-            focus["last_assistant_message"] = content
-        if focus["last_user_message"] and focus["last_assistant_message"]:
-            break
-    if not focus["last_user_message"] and not focus["last_assistant_message"]:
-        return message
-    return (
-        f"当前用户请求：{message}\n"
-        f"上一轮用户请求：{focus['last_user_message']}\n"
-        f"上一轮助手回复：{focus['last_assistant_message']}"
-    )
 
 
 class SkillCodeExecutionError(RuntimeError):
@@ -271,7 +250,7 @@ async def execute_skill(
     if skill.execution_mode.startswith("deterministic"):
         raise SkillContractError(f"Deterministic skill requires a registered executor: {skill.name}")
 
-    skill_message = _message_with_recent_focus(message, history or [])
+    skill_message = build_skill_message_with_context(message, history or [])
 
     if not llm.available and skill.name == "query_gene_expression":
         return {
@@ -299,6 +278,7 @@ async def retry_skill(
     previous_error: str | None = None,
     evaluation: dict[str, Any] | None = None,
     emit: Emit | None = None,
+    history: list[Any] | None = None,
 ) -> dict[str, Any]:
     retry_feedback = {
         "previous_code": previous_code,
@@ -306,7 +286,8 @@ async def retry_skill(
         "previous_error": previous_error,
         "evaluation": evaluation,
     }
-    code, result = await run_generated_skill_code(message, skill, llm, emit, retry_feedback, is_retry=True)
+    skill_message = build_skill_message_with_context(message, history or [])
+    code, result = await run_generated_skill_code(skill_message, skill, llm, emit, retry_feedback, is_retry=True)
     return enrich_skill_output_with_id_mapping(
         {
             "mode": "generated_code_retry",

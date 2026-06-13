@@ -470,6 +470,7 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
     )
 
     joined_context = "\n".join(message["content"] for message in llm.calls[0])
+    final_payload = json.loads(llm.calls[0][1]["content"])
     assert result["answer"] == "searched answer"
     assert route_calls["count"] == 1
     assert result["search"]["sources"] == [
@@ -477,6 +478,8 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
     ]
     assert "fresh web context" in joined_context
     assert "https://example.com/result" in joined_context
+    assert "answer_requirements" in final_payload["web_search"]
+    assert "[1]" in " ".join(final_payload["web_search"]["answer_requirements"])
     assert any(str(event[2]).startswith("Running Web Search") for event in events)
     assert any(event[0] == "source_delta" and event[3]["sources"][0]["index"] == 1 for event in events)
 
