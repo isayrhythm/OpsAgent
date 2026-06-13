@@ -86,3 +86,30 @@ def test_stream_chat_accumulates_usage_only_chunk(monkeypatch) -> None:
     assert asyncio.run(collect()) == "generated code"
     assert requests[0]["stream_options"] == {"include_usage": True}
     assert client.usage_snapshot()["total_tokens"] == 25
+
+
+def test_stream_chat_uses_configured_timeout(monkeypatch) -> None:
+    captured = {}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text='data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def fake_async_client(**kwargs):
+        captured.update(kwargs)
+        return real_async_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr(deepseek.httpx, "AsyncClient", fake_async_client)
+    client = make_client()
+
+    async def collect() -> str:
+        return "".join([delta async for delta in client.stream_chat([{"role": "user", "content": "hello"}])])
+
+    assert asyncio.run(collect()) == "ok"
+    assert captured["timeout"] == 20

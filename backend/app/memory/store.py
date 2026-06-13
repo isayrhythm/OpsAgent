@@ -143,6 +143,26 @@ class MemoryStore:
         metadata_path = Path(summary.path).parent / f"{summary.file_id}.json"
         metadata_path.write_text(summary.model_dump_json(indent=2), encoding="utf-8")
 
+    def resolve_chat_attachments(
+        self,
+        user_id: str,
+        session_id: str | None,
+        requested: list[UploadedFileSummary],
+    ) -> list[UploadedFileSummary]:
+        if not requested:
+            return []
+        if not session_id:
+            raise ValueError("Cannot attach uploaded files without a session_id.")
+
+        stored_by_id = {item.file_id: item for item in self.load_uploads(user_id, session_id)}
+        resolved: list[UploadedFileSummary] = []
+        for item in requested:
+            stored = stored_by_id.get(item.file_id)
+            if stored is None:
+                raise ValueError(f"Uploaded file is not available in this session: {item.file_id}")
+            resolved.append(self._validate_uploaded_file_path(user_id, session_id, stored))
+        return resolved
+
     def load_uploads(self, user_id: str, session_id: str) -> list[UploadedFileSummary]:
         upload_dir = self.paths.upload_session_dir(user_id, session_id)
         if not upload_dir.exists():
@@ -152,3 +172,22 @@ class MemoryStore:
             payload = json.loads(path.read_text(encoding="utf-8"))
             uploads.append(UploadedFileSummary.model_validate(payload))
         return uploads
+
+    def _validate_uploaded_file_path(
+        self,
+        user_id: str,
+        session_id: str,
+        summary: UploadedFileSummary,
+    ) -> UploadedFileSummary:
+        if not summary.path:
+            raise ValueError(f"Uploaded file has no server path: {summary.file_id}")
+        upload_dir = self.paths.upload_session_dir(user_id, session_id).resolve()
+        file_path = Path(summary.path).resolve()
+        try:
+            file_path.relative_to(upload_dir)
+        except ValueError as exc:
+            raise ValueError(f"Uploaded file path is outside the session upload directory: {summary.file_id}") from exc
+        if not file_path.is_file():
+            raise ValueError(f"Uploaded file is missing on disk: {summary.file_id}")
+        # 聊天请求里的 path/intake 都不可信，只使用服务端保存的 metadata。
+        return summary.model_copy(update={"path": str(file_path)})

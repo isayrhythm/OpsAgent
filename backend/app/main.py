@@ -6,6 +6,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
+from backend.app.config import CORS_ORIGINS
 from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
 from backend.app.skill_tools.differential_protein import DifferentialProteinError, artifact_path
@@ -17,7 +18,7 @@ from backend.app.services.upload_intake_manager import UploadIntakeManager
 app = FastAPI(title="OpsAgent API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,12 +52,16 @@ async def skills() -> list[SkillSummary]:
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
+    try:
+        attachments = memory.resolve_chat_attachments(request.user_id, request.session_id, request.attachments)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     task_id = tasks.create_task(
         request.message,
         request.user_id,
         request.session_id,
         request.history,
-        request.attachments,
+        attachments,
         request.detached_files,
         request.web_search,
         request.web_search_mode,

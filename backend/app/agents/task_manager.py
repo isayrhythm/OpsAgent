@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.app.config import TASK_RETENTION_SECONDS
 from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.schemas import TaskEvent
@@ -32,9 +33,10 @@ class TaskState:
 
 
 class TaskManager:
-    def __init__(self) -> None:
+    def __init__(self, retention_seconds: float = TASK_RETENTION_SECONDS) -> None:
         self._tasks: dict[str, TaskState] = {}
         self._memory = MemoryStore()
+        self._retention_seconds = retention_seconds
 
     def create_task(
         self,
@@ -68,6 +70,9 @@ class TaskManager:
     def get(self, task_id: str) -> TaskState | None:
         return self._tasks.get(task_id)
 
+    def discard(self, task_id: str) -> None:
+        self._tasks.pop(task_id, None)
+
     def cancel(self, task_id: str) -> bool:
         state = self.get(task_id)
         if state is None or state.done or state.runner is None or state.runner.done():
@@ -84,6 +89,14 @@ class TaskManager:
         async with state.condition:
             state.done = True
             state.condition.notify_all()
+        asyncio.create_task(self._discard_after_retention(state.id))
+
+    async def _discard_after_retention(self, task_id: str) -> None:
+        if self._retention_seconds > 0:
+            await asyncio.sleep(self._retention_seconds)
+        state = self._tasks.get(task_id)
+        if state is not None and state.done:
+            self.discard(task_id)
 
     async def _run(self, state: TaskState) -> None:
         llm = DeepSeekClient()

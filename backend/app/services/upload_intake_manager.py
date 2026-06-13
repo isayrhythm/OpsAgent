@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.app.config import UPLOAD_INTAKE_RETENTION_SECONDS
 from backend.app.schemas import TaskEvent, UploadedFileSummary
 from backend.app.tools.file_context import inspect_uploaded_file
 
@@ -23,8 +24,9 @@ class UploadIntakeState:
 
 
 class UploadIntakeManager:
-    def __init__(self) -> None:
+    def __init__(self, retention_seconds: float = UPLOAD_INTAKE_RETENTION_SECONDS) -> None:
         self._tasks: dict[str, UploadIntakeState] = {}
+        self._retention_seconds = retention_seconds
 
     def create_task(
         self,
@@ -39,6 +41,9 @@ class UploadIntakeManager:
 
     def get(self, task_id: str) -> UploadIntakeState | None:
         return self._tasks.get(task_id)
+
+    def discard(self, task_id: str) -> None:
+        self._tasks.pop(task_id, None)
 
     async def _emit(self, state: UploadIntakeState, event_type: str, step: int, status: str, data: Any = None) -> None:
         await state.queue.put(TaskEvent(type=event_type, step=step, status=status, data=data))
@@ -71,3 +76,11 @@ class UploadIntakeManager:
             await self._emit(state, "error", 999, f"File Context failed: {exc}")
         finally:
             state.done = True
+            asyncio.create_task(self._discard_after_retention(state.id))
+
+    async def _discard_after_retention(self, task_id: str) -> None:
+        if self._retention_seconds > 0:
+            await asyncio.sleep(self._retention_seconds)
+        state = self._tasks.get(task_id)
+        if state is not None and state.done:
+            self.discard(task_id)

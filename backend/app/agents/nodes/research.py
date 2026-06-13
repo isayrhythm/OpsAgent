@@ -14,6 +14,8 @@ def make_research_node(llm: DeepSeekClient, emit: Emit, deps: Any):
             {
                 "message": state["message"],
                 "history": state.get("history", []),
+                "attachments": state.get("attachments", []),
+                "data_profiles": state.get("data_profiles", []),
                 "providers": normalize_search_state(state, deps).get("providers", []),
                 "skills": state.get("skills", []),
             }

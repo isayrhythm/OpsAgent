@@ -29,7 +29,7 @@ def test_format_web_search_context_handles_empty_results() -> None:
     assert "没有返回可用结果" in format_web_search_context({"query": "none", "results": []})
 
 
-def test_web_search_sources_keeps_numbered_urls() -> None:
+def test_web_search_sources_renumbers_referenceable_urls() -> None:
     sources = web_search_sources(
         {
             "results": [
@@ -42,8 +42,27 @@ def test_web_search_sources_keeps_numbered_urls() -> None:
 
     assert sources == [
         {"index": 1, "title": "First", "url": "https://example.com/1"},
-        {"index": 3, "title": "Third", "url": "https://example.com/3"},
+        {"index": 2, "title": "Third", "url": "https://example.com/3"},
     ]
+
+
+def test_format_web_search_context_uses_same_reference_numbers_as_sources() -> None:
+    result = {
+        "query": "opsagent",
+        "results": [
+            {"title": "First", "url": "https://example.com/1", "content": "one"},
+            {"title": "Missing url", "content": "skip"},
+            {"title": "Third", "url": "https://example.com/3", "content": "three"},
+        ],
+    }
+
+    context = format_web_search_context(result)
+    sources = web_search_sources(result)
+
+    assert "[1] First" in context
+    assert "[2] Third" in context
+    assert "Missing url" not in context
+    assert [source["index"] for source in sources] == [1, 2]
 
 
 def test_web_search_answer_requirements_define_source_citations() -> None:

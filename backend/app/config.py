@@ -12,8 +12,19 @@ load_dotenv(PROJECT_ROOT / ".env")
 SKILL_DIR = Path(os.getenv("OPSAGENT_SKILL_DIR", PROJECT_ROOT / "skill"))
 DATA_DIR = Path(os.getenv("OPSAGENT_DATA_DIR", PROJECT_ROOT / "data"))
 MEMORY_DIR = Path(os.getenv("OPSAGENT_MEMORY_DIR", PROJECT_ROOT / "memory"))
+CORS_ORIGINS = [
+    item.strip()
+    for item in os.getenv(
+        "OPSAGENT_CORS_ORIGINS",
+        "http://127.0.0.1:5173,http://localhost:5173",
+    ).split(",")
+    if item.strip()
+]
 
 EXECUTION_TIMEOUT_SECONDS = int(os.getenv("OPSAGENT_EXECUTION_TIMEOUT_SECONDS", "20"))
+LLM_STREAM_TIMEOUT_SECONDS = int(os.getenv("OPSAGENT_LLM_STREAM_TIMEOUT_SECONDS", "20"))
+TASK_RETENTION_SECONDS = int(os.getenv("OPSAGENT_TASK_RETENTION_SECONDS", "120"))
+UPLOAD_INTAKE_RETENTION_SECONDS = int(os.getenv("OPSAGENT_UPLOAD_INTAKE_RETENTION_SECONDS", "120"))
 WEB_SEARCH_PROVIDER = os.getenv("WEB_SEARCH_PROVIDER", "tavily").strip().lower()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 TAVILY_BASE_URL = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com")

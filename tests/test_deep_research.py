@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from backend.app.agents import deep_research
 from backend.app.agents import agent_graph
+from backend.app.agents.nodes.research import make_research_node
+from backend.app.schemas import UploadedFileSummary
 from backend.app.tools.web_search_planner import SearchPlan, SearchQuery
 
 
@@ -171,6 +173,57 @@ def test_deep_research_final_answer_streams_deltas(monkeypatch) -> None:
     assert answer_deltas == ["Final ", "answer [1]"]
     assert any(tool.get("name") == "gene_phenotype_prediction" for tool in streaming_llm.planner_tools)
     assert result["research"]["plan"]["tasks"][0]["tools"] == ["Tavily Search"]
+
+
+def test_research_node_passes_file_context_to_research_graph() -> None:
+    captured = {}
+
+    class FakeResearchGraph:
+        async def ainvoke(self, payload):
+            captured.update(payload)
+            return {
+                "answer": "ok",
+                "intent": {},
+                "plan": {},
+                "completed_tasks": [],
+                "evaluations": [],
+                "sources": [],
+            }
+
+    deps = SimpleNamespace(
+        build_research_graph=lambda _llm, _emit: FakeResearchGraph(),
+        normalize_web_search_mode=lambda mode, legacy_web_search=False: mode or "auto",
+    )
+
+    async def emit(_event_type, _step, _status, _data=None):
+        return None
+
+    attachment = UploadedFileSummary(
+        file_id="file-a",
+        filename="matrix.csv",
+        content_type="text/csv",
+        size=12,
+        path="/tmp/matrix.csv",
+        intake={"status": "profiled"},
+    )
+    data_profiles = [{"filename": "matrix.csv", "file_kind": "table"}]
+    node = make_research_node(OfflineLLM(), emit, deps)
+
+    asyncio.run(
+        node(
+            {
+                "message": "deep research uploaded matrix",
+                "history": [],
+                "attachments": [attachment],
+                "data_profiles": data_profiles,
+                "skills": [],
+                "search": {"mode": "off", "providers": []},
+            }
+        )
+    )
+
+    assert captured["attachments"] == [attachment]
+    assert captured["data_profiles"] == data_profiles
 
 
 def test_deep_research_command_tool_is_builtin_and_executable(monkeypatch) -> None:
@@ -373,9 +426,13 @@ def test_deep_research_plan_repairs_missing_trait_and_gene_info_steps() -> None:
 
 def test_deep_research_passes_dependency_gene_ids_to_downstream_skill(monkeypatch) -> None:
     seen_messages = {}
+    seen_attachments = {}
+    seen_profiles = {}
 
     async def fake_execute_registered_skill(skill, context):
         seen_messages[skill.name] = context.message
+        seen_attachments[skill.name] = context.attachments
+        seen_profiles[skill.name] = context.data_profiles
         if skill.name == "trait2gene_query":
             return {
                 "mode": "deterministic_query",
@@ -426,9 +483,31 @@ def test_deep_research_passes_dependency_gene_ids_to_downstream_skill(monkeypatc
     async def capture(_task):
         return None
 
-    asyncio.run(executor.execute_dag(tasks, [], [], skills, capture))
+    attachment = UploadedFileSummary(
+        file_id="file-a",
+        filename="matrix.csv",
+        content_type="text/csv",
+        size=12,
+        path="/tmp/matrix.csv",
+        intake={"status": "profiled", "file_kind": "table"},
+    )
+    data_profiles = [{"filename": "matrix.csv", "file_kind": "table"}]
+
+    asyncio.run(
+        executor.execute_dag(
+            tasks,
+            [],
+            [],
+            skills,
+            capture,
+            attachments=[attachment],
+            data_profiles=data_profiles,
+        )
+    )
 
     assert tasks[0].status == "completed"
     assert tasks[1].status == "completed"
     assert "AGIS_Os01g01010" in seen_messages["query_gene_info"]
     assert "AGIS_Os02g02020" in seen_messages["query_gene_info"]
+    assert seen_attachments["trait2gene_query"] == [attachment]
+    assert seen_profiles["query_gene_info"] == data_profiles

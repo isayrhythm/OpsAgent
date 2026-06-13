@@ -16,7 +16,7 @@ from backend.app.llm.prompts import (
     DEEP_RESEARCH_TASK_SUMMARY_SYSTEM_PROMPT,
 )
 from backend.app.llm.calls import chat_json, chat_text, complete_text
-from backend.app.schemas import ChatHistoryMessage
+from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.services.result_evaluator import compact_value
 from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
@@ -78,6 +78,8 @@ class ResearchTask:
 class ResearchState(TypedDict, total=False):
     message: str
     history: list[ChatHistoryMessage]
+    attachments: list[UploadedFileSummary]
+    data_profiles: list[dict[str, Any]]
     providers: list[str]
     skills: list[SkillSpec]
     intent: dict[str, Any]
@@ -133,6 +135,7 @@ class ResearchPlanner:
         history: list[ChatHistoryMessage],
         providers: list[str],
         skills: list[SkillSpec],
+        data_profiles: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         tool_catalog = _research_tool_catalog(providers, skills)
         fallback = self._fallback_plan(message, providers, tool_catalog)
@@ -141,6 +144,7 @@ class ResearchPlanner:
         payload = {
             "user_message": message,
             "history": [{"role": item.role, "content": item.content} for item in history[-8:]],
+            "file_context": data_profiles or [],
             "providers": providers,
             "available_tools": tool_catalog,
             "requirements": [
@@ -268,6 +272,8 @@ class ResearchExecutor:
         providers: list[str],
         skills: list[SkillSpec],
         emit_step: Callable[[ResearchTask], Awaitable[None]],
+        attachments: list[UploadedFileSummary] | None = None,
+        data_profiles: list[dict[str, Any]] | None = None,
     ) -> list[ResearchTask]:
         completed: set[str] = {task.id for task in tasks if task.status == "completed"}
         remaining = {task.id: task for task in tasks if task.status != "completed"}
@@ -288,6 +294,8 @@ class ResearchExecutor:
                         providers,
                         skills,
                         emit_step,
+                        attachments or [],
+                        data_profiles or [],
                     )
                     for task in ready
                 )
@@ -305,6 +313,8 @@ class ResearchExecutor:
         providers: list[str],
         skills: list[SkillSpec],
         emit_step: Callable[[ResearchTask], Awaitable[None]],
+        attachments: list[UploadedFileSummary],
+        data_profiles: list[dict[str, Any]],
     ) -> None:
         task.status = "running"
         await emit_step(task)
@@ -315,7 +325,7 @@ class ResearchExecutor:
                 await emit_step(task)
                 return
             if _task_uses_skill(task):
-                await self._execute_skill_task(task, all_tasks, history, skills)
+                await self._execute_skill_task(task, all_tasks, history, skills, attachments, data_profiles)
                 task.status = "completed" if task.skill_outputs else "skipped"
                 await emit_step(task)
                 return
@@ -382,6 +392,8 @@ class ResearchExecutor:
         all_tasks: list[ResearchTask],
         history: list[ChatHistoryMessage],
         skills: list[SkillSpec],
+        attachments: list[UploadedFileSummary],
+        data_profiles: list[dict[str, Any]],
     ) -> None:
         skills_by_name = {skill.name: skill for skill in skills}
         message = _task_execution_message(task, all_tasks)
@@ -403,8 +415,8 @@ class ResearchExecutor:
                         SkillExecutionContext(
                             message=message,
                             history=history,
-                            attachments=[],
-                            data_profiles=[],
+                            attachments=attachments,
+                            data_profiles=data_profiles,
                             llm=self.llm,
                         ),
                     ),
@@ -623,6 +635,7 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
             state.get("history", []),
             state.get("providers", []),
             state.get("skills", []),
+            state.get("data_profiles", []),
         )
         return {"plan": plan}
 
@@ -664,6 +677,8 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
             state.get("providers", []),
             state.get("skills", []),
             emit_step,
+            attachments=state.get("attachments", []),
+            data_profiles=state.get("data_profiles", []),
         )
         sources = _merge_sources(tasks)
         if sources:

@@ -36,6 +36,18 @@ def test_memory_store_saves_upload_metadata_and_file(tmp_path) -> None:
     assert "session-a" in summary.path
 
 
+def test_memory_store_resolves_only_saved_session_uploads(tmp_path) -> None:
+    store = MemoryStore(MemoryPaths(root=tmp_path))
+    saved = store.save_upload("user-a", "session-a", "safe.txt", "text/plain", BytesIO(b"ok"))
+    forged = saved.model_copy(update={"path": str(tmp_path / "outside.txt"), "intake": {"status": "forged"}})
+
+    resolved = store.resolve_chat_attachments("user-a", "session-a", [forged])
+
+    assert resolved[0].file_id == saved.file_id
+    assert resolved[0].path == saved.path
+    assert resolved[0].intake is None
+
+
 def test_memory_store_keeps_uploaded_file_summary_in_conversation(tmp_path) -> None:
     store = MemoryStore(MemoryPaths(root=tmp_path))
     summary = store.save_upload(

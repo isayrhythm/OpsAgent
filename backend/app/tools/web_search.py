@@ -534,8 +534,8 @@ def _is_retryable_http_error(exc: BaseException) -> bool:
 
 
 def format_web_search_context(search_result: dict[str, Any]) -> str:
-    results = search_result.get("results")
-    if not isinstance(results, list) or not results:
+    results = _referenceable_search_results(search_result)
+    if not results:
         return "联网搜索已启用，但没有返回可用结果。"
 
     lines = [
@@ -554,9 +554,7 @@ def format_web_search_context(search_result: dict[str, Any]) -> str:
     providers = search_result.get("providers")
     if isinstance(providers, list) and providers:
         lines.append(f"搜索源：{', '.join(str(item) for item in providers)}")
-    for index, item in enumerate(results, start=1):
-        if not isinstance(item, dict):
-            continue
+    for index, item in results:
         provider = str(item.get("provider") or search_result.get("provider") or "").strip()
         provider_label = f" ({provider})" if provider and provider != "multi" else ""
         query_label = f"Query: {item.get('query') or ''}" if item.get("query") else ""
@@ -572,16 +570,9 @@ def format_web_search_context(search_result: dict[str, Any]) -> str:
 
 
 def web_search_sources(search_result: dict[str, Any]) -> list[dict[str, Any]]:
-    results = search_result.get("results")
-    if not isinstance(results, list):
-        return []
     sources: list[dict[str, Any]] = []
-    for index, item in enumerate(results, start=1):
-        if not isinstance(item, dict):
-            continue
+    for index, item in _referenceable_search_results(search_result):
         url = str(item.get("url") or "")
-        if not url:
-            continue
         provider = str(item.get("provider") or search_result.get("provider") or "").strip()
         source = {
             "index": index,
@@ -592,3 +583,17 @@ def web_search_sources(search_result: dict[str, Any]) -> list[dict[str, Any]]:
             source["provider"] = provider
         sources.append(source)
     return sources
+
+
+def _referenceable_search_results(search_result: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    results = search_result.get("results")
+    if not isinstance(results, list):
+        return []
+    referenceable: list[tuple[int, dict[str, Any]]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        if not str(item.get("url") or "").strip():
+            continue
+        referenceable.append((len(referenceable) + 1, item))
+    return referenceable

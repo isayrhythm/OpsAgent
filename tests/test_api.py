@@ -1,5 +1,6 @@
 import asyncio
 import json
+from io import BytesIO
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -59,10 +60,13 @@ def test_upload_endpoint_runs_file_inspector_for_table(tmp_path, monkeypatch) ->
     assert "standard_files" not in intake
 
 
-def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
+def test_chat_endpoint_delegates_to_task_manager(tmp_path, monkeypatch) -> None:
     from backend.app import main
+    from backend.app.memory.store import MemoryPaths, MemoryStore
 
     calls = {}
+    store = MemoryStore(MemoryPaths(root=tmp_path))
+    saved = store.save_upload("user-a", "session-a", "a.txt", "text/plain", BytesIO(b"abc"))
 
     class FakeTasks:
         def create_task(
@@ -88,6 +92,7 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
             calls["web_search_providers"] = web_search_providers
             return "task-1"
 
+    monkeypatch.setattr(main, "memory", store)
     monkeypatch.setattr(main, "tasks", FakeTasks())
     client = TestClient(app)
 
@@ -100,11 +105,11 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
             "history": [{"role": "user", "content": "previous"}],
             "attachments": [
                 {
-                    "file_id": "file-a",
+                    "file_id": saved.file_id,
                     "filename": "a.txt",
                     "content_type": "text/plain",
                     "size": 3,
-                    "path": "memory/path/a.txt",
+                    "path": "C:/secret/should-not-be-trusted.txt",
                 }
             ],
             "detached_files": [{"file_id": "file-b", "filename": "removed.csv"}],
@@ -121,10 +126,40 @@ def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:
     assert calls["session_id"] == "session-a"
     assert calls["history"][0].content == "previous"
     assert calls["attachments"][0].filename == "a.txt"
+    assert calls["attachments"][0].path == saved.path
     assert calls["detached_files"][0].filename == "removed.csv"
     assert calls["web_search"] is True
     assert calls["web_search_mode"] == "force"
     assert calls["web_search_providers"] == ["tavily", "quark"]
+
+
+def test_chat_endpoint_rejects_unknown_upload_attachment(tmp_path, monkeypatch) -> None:
+    from backend.app import main
+    from backend.app.memory.store import MemoryPaths, MemoryStore
+
+    monkeypatch.setattr(main, "memory", MemoryStore(MemoryPaths(root=tmp_path)))
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "message": "hello",
+            "user_id": "user-a",
+            "session_id": "session-a",
+            "attachments": [
+                {
+                    "file_id": "not-saved",
+                    "filename": "secret.txt",
+                    "content_type": "text/plain",
+                    "size": 6,
+                    "path": "C:/Users/me/secret.txt",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert "not-saved" in response.json()["detail"]
 
 
 def test_cancel_endpoint_delegates_to_task_manager(monkeypatch) -> None:

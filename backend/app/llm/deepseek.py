@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from backend.app.config import LLM_STREAM_TIMEOUT_SECONDS
 from backend.app.llm.settings import LLMSettings, get_llm_settings
 
 
@@ -91,7 +92,7 @@ class DeepSeekClient:
         }
         headers = {"Authorization": f"Bearer {self.settings.api_key}"}
 
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=LLM_STREAM_TIMEOUT_SECONDS) as client:
             async with client.stream(
                 "POST",
                 f"{self.settings.base_url.rstrip('/')}/chat/completions",
