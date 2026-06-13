@@ -173,6 +173,96 @@ def test_deep_research_final_answer_streams_deltas(monkeypatch) -> None:
     assert result["research"]["plan"]["tasks"][0]["tools"] == ["Tavily Search"]
 
 
+def test_deep_research_command_tool_is_builtin_and_executable(monkeypatch) -> None:
+    async def fake_plan_shell_command(task, context, history, llm):
+        assert task["tools"] == ["Shell Command"]
+        return SimpleNamespace(command="pwd", reason="inspect workspace")
+
+    async def fake_execute_shell_command(command, **kwargs):
+        assert command == "pwd"
+        assert kwargs["task_id"] == "T1"
+        return {
+            "status": "completed",
+            "analysis": "shell_command",
+            "command": command,
+            "exit_code": 0,
+            "stdout": "/workspace\n",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(deep_research, "plan_shell_command", fake_plan_shell_command)
+    monkeypatch.setattr(deep_research, "execute_shell_command", fake_execute_shell_command)
+
+    executor = deep_research.ResearchExecutor(OfflineLLM())
+    tasks = [
+        deep_research.ResearchTask(
+            id="T1",
+            title="查看本地文件目录",
+            question="查看本地文件目录",
+            tools=["Shell Command"],
+        )
+    ]
+
+    async def capture(_task):
+        return None
+
+    asyncio.run(executor.execute_dag(tasks, [], [], [], capture))
+
+    assert tasks[0].status == "completed"
+    assert tasks[0].command_outputs[0]["output"]["stdout"] == "/workspace\n"
+    assert "shell_command" in tasks[0].summary
+
+
+def test_deep_research_command_tool_repairs_failed_command(monkeypatch) -> None:
+    planned_contexts = []
+    commands = ["missing-command", "pwd"]
+
+    async def fake_plan_shell_command(task, context, history, llm):
+        planned_contexts.append(context)
+        return SimpleNamespace(command=commands[len(planned_contexts) - 1], reason="repair")
+
+    async def fake_execute_shell_command(command, **kwargs):
+        if command == "missing-command":
+            return {
+                "status": "failed",
+                "analysis": "shell_command",
+                "command": command,
+                "exit_code": 127,
+                "stdout": "",
+                "stderr": "missing-command: not found",
+            }
+        return {
+            "status": "completed",
+            "analysis": "shell_command",
+            "command": command,
+            "exit_code": 0,
+            "stdout": "/workspace\n",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(deep_research, "plan_shell_command", fake_plan_shell_command)
+    monkeypatch.setattr(deep_research, "execute_shell_command", fake_execute_shell_command)
+
+    executor = deep_research.ResearchExecutor(OfflineLLM())
+    tasks = [
+        deep_research.ResearchTask(
+            id="T1",
+            title="查看本地文件目录",
+            question="查看本地文件目录",
+            tools=["Shell Command"],
+        )
+    ]
+
+    async def capture(_task):
+        return None
+
+    asyncio.run(executor.execute_dag(tasks, [], [], [], capture))
+
+    assert tasks[0].status == "completed"
+    assert [item["output"]["command"] for item in tasks[0].command_outputs] == ["missing-command", "pwd"]
+    assert "missing-command: not found" in planned_contexts[1]
+
+
 def test_deep_research_plan_trims_overbroad_synthesis_tools() -> None:
     planner = deep_research.ResearchPlanner(OfflineLLM())
     tool_catalog = [

@@ -12,6 +12,12 @@ def load_skill_registry() -> list[SkillSpec]:
     return load_skill_catalog()
 
 
+def _load_selected_skill(skill: SkillSpec) -> SkillSpec:
+    if skill.execution_mode == "builtin_tool":
+        return skill
+    return load_skill(skill.path)
+
+
 async def route_registered_skills(
     *,
     message: str,
@@ -38,7 +44,7 @@ async def route_registered_skills(
             "route_reason": decision.reason,
         }
 
-    loaded_skills = [load_skill(skill.path) for skill in selected_skills]
+    loaded_skills = [_load_selected_skill(skill) for skill in selected_skills]
     return {
         "skill_name": loaded_skills[0].name,
         "skill_names": [skill.name for skill in loaded_skills],

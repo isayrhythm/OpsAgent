@@ -1,4 +1,5 @@
 short_term/*
 long_term/*
+command_tool/*
 !short_term/.gitkeep
 !long_term/.gitkeep

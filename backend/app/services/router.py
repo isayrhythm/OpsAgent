@@ -129,7 +129,7 @@ async def route_skill(
             temperature=0,
             max_tokens=500,
         )
-    except Exception as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError("DeepSeek router returned invalid JSON") from exc
 
     skill_names = routed.get("skill_names")

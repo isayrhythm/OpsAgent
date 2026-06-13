@@ -21,6 +21,8 @@ from backend.app.services.result_evaluator import compact_value
 from backend.app.services.deepseek_client import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.services.skill_runtime import SkillExecutionContext, execute_registered_skill
+from backend.app.tools.command_tool import COMMAND_TOOL_NAME, execute_shell_command, plan_shell_command
+from backend.app.tools.tool_runner import ToolRetryPolicy, run_tool
 from backend.app.tools.web_search import format_web_search_context, search_web_queries, web_search_sources
 from backend.app.tools.web_search_planner import plan_web_search
 
@@ -28,6 +30,8 @@ from backend.app.tools.web_search_planner import plan_web_search
 Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
 ResearchTaskStatus = Literal["pending", "running", "completed", "failed", "skipped"]
 SEARCH_TOOL_NAMES = {"Search Query Rewriter", "Tavily Search", "Quark Search"}
+COMMAND_TOOL_NAMES = {COMMAND_TOOL_NAME}
+MAX_COMMAND_ATTEMPTS = 2
 
 
 @dataclass
@@ -43,6 +47,7 @@ class ResearchTask:
     summary: str = ""
     evidence: list[dict[str, Any]] = field(default_factory=list)
     skill_outputs: list[dict[str, Any]] = field(default_factory=list)
+    command_outputs: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +64,7 @@ class ResearchTask:
             "summary": self.summary,
             "evidence_count": len(self.evidence),
             "skill_output_count": len(self.skill_outputs),
+            "command_output_count": len(self.command_outputs),
             "error": self.error,
         }
 
@@ -231,8 +237,13 @@ class ResearchPlanner:
         providers: list[str] | None = None,
         tool_catalog: list[dict[str, Any]] | None = None,
     ) -> list[ResearchTask]:
-        tools = [str(item.get("name") or item.get("label") or "").strip() for item in (tool_catalog or _research_tool_catalog(providers or [], []))]
-        details = _tool_details(tools, tool_catalog or _research_tool_catalog(providers or [], []))
+        catalog = tool_catalog or _research_tool_catalog(providers or [], [])
+        tools = [
+            name
+            for name in _research_tools(providers or [])
+            if name in {str(item.get("name") or item.get("label") or "").strip() for item in catalog}
+        ]
+        details = _tool_details(tools, catalog)
         return [
             ResearchTask("T1", "Clarify the research question", message, "Identify the exact answer scope.", tools=tools, tool_details=details),
             ResearchTask("T2", "Gather current evidence", message, "Search and collect relevant sources.", tools=tools, tool_details=details),
@@ -292,6 +303,11 @@ class ResearchExecutor:
         task.status = "running"
         await emit_step(task)
         try:
+            if _task_uses_command(task):
+                await self._execute_command_task(task, all_tasks, history)
+                task.status = "completed" if _command_task_completed(task) else "failed"
+                await emit_step(task)
+                return
             if _task_uses_skill(task):
                 await self._execute_skill_task(task, all_tasks, history, skills)
                 task.status = "completed" if task.skill_outputs else "skipped"
@@ -324,6 +340,36 @@ class ResearchExecutor:
             task.summary = f"Step failed: {exc}"
         await emit_step(task)
 
+    async def _execute_command_task(
+        self,
+        task: ResearchTask,
+        all_tasks: list[ResearchTask],
+        history: list[ChatHistoryMessage],
+    ) -> None:
+        base_context = _task_execution_message(task, all_tasks)
+        task.command_outputs = []
+        context = base_context
+        # 命令失败时不盲目重放同一条；把 stdout/stderr/exit_code 反馈给 planner，
+        # 让它生成第二条修复命令。最多执行两条命令，避免自动命令链失控。
+        for attempt in range(1, MAX_COMMAND_ATTEMPTS + 1):
+            plan = await plan_shell_command(task.to_dict(), context, history, self.llm)
+            output = await execute_shell_command(plan.command, task_id=task.id)
+            task.command_outputs.append(
+                {
+                    "tool_name": COMMAND_TOOL_NAME,
+                    "attempt": attempt,
+                    "plan": {"command": plan.command, "reason": plan.reason},
+                    "output": output,
+                }
+            )
+            if _command_output_completed(output):
+                break
+            if attempt < MAX_COMMAND_ATTEMPTS:
+                context = _command_repair_context(base_context, task.command_outputs)
+        task.summary = await self._summarize_command_outputs(task, task.command_outputs)
+        if not _command_task_completed(task):
+            task.error = "Shell command failed after repair attempt."
+
     async def _execute_skill_task(
         self,
         task: ResearchTask,
@@ -335,7 +381,7 @@ class ResearchExecutor:
         message = _task_execution_message(task, all_tasks)
         outputs: list[dict[str, Any]] = []
         errors: list[str] = []
-        for tool_name in [tool for tool in task.tools if tool not in SEARCH_TOOL_NAMES]:
+        for tool_name in [tool for tool in task.tools if tool not in SEARCH_TOOL_NAMES and tool not in COMMAND_TOOL_NAMES]:
             skill = skills_by_name.get(tool_name)
             if skill is None:
                 errors.append(f"Skill is not available: {tool_name}")
@@ -344,15 +390,19 @@ class ResearchExecutor:
                 errors.append(f"Skill is not executable in deep research yet: {tool_name}")
                 continue
             try:
-                output = await execute_registered_skill(
-                    skill,
-                    SkillExecutionContext(
-                        message=message,
-                        history=history,
-                        attachments=[],
-                        data_profiles=[],
-                        llm=self.llm,
+                output = await run_tool(
+                    tool_name,
+                    lambda skill=skill: execute_registered_skill(
+                        skill,
+                        SkillExecutionContext(
+                            message=message,
+                            history=history,
+                            attachments=[],
+                            data_profiles=[],
+                            llm=self.llm,
+                        ),
                     ),
+                    policy=ToolRetryPolicy(max_attempts=1, wrap_exceptions=False),
                 )
             except Exception as exc:
                 errors.append(f"{tool_name}: {exc}")
@@ -366,6 +416,30 @@ class ResearchExecutor:
             task.error = task.summary
         else:
             task.summary = "No executable skill was selected for this step."
+
+    async def _summarize_command_outputs(self, task: ResearchTask, outputs: list[dict[str, Any]]) -> str:
+        compact_outputs = compact_value(outputs)
+        if not self.llm.available:
+            return json.dumps(compact_outputs, ensure_ascii=False)[:1200]
+        payload = {
+            "task": task.to_dict(),
+            "command_outputs": compact_outputs,
+            "instruction": "Summarize only facts from the command output. Mention command failures clearly.",
+        }
+        try:
+            response = await chat_text(
+                self.llm,
+                [
+                    {"role": "system", "content": DEEP_RESEARCH_TASK_SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                model=self.llm.settings.answer_model,
+                temperature=0.2,
+                max_tokens=700,
+            )
+        except Exception:
+            return json.dumps(compact_outputs, ensure_ascii=False)[:1200]
+        return response.strip()
 
     async def _summarize_task(self, task: ResearchTask, context: str) -> str:
         if not self.llm.available:
@@ -421,7 +495,7 @@ class ResearchEvaluator:
 
     async def evaluate_steps(self, tasks: list[ResearchTask], question: str) -> dict[str, Any]:
         missing = [task.id for task in tasks if task.status != "completed" or not task.summary.strip()]
-        enough = not missing and any(task.evidence or task.skill_outputs for task in tasks)
+        enough = not missing and any(task.evidence or task.skill_outputs or task.command_outputs for task in tasks)
         if not self.llm.available:
             return {"sufficient": enough, "missing": missing, "repair_tasks": []}
         payload = {
@@ -470,6 +544,7 @@ class ResearchSynthesizer:
                     "summary": task.summary,
                     "evidence": task.evidence[:8],
                     "skill_outputs": compact_value(task.skill_outputs),
+                    "command_outputs": compact_value(task.command_outputs),
                 }
                 for task in tasks
             ],
@@ -689,7 +764,45 @@ def _task_execution_message(task: ResearchTask, all_tasks: list[ResearchTask]) -
                 "  structured_result: "
                 + json.dumps(compact_value(dep.skill_outputs), ensure_ascii=False)[:3000]
             )
+        if dep.command_outputs:
+            sections.append(
+                "  command_result: "
+                + json.dumps(compact_value(dep.command_outputs), ensure_ascii=False)[:3000]
+            )
     return "\n".join(sections)
+
+
+def _command_task_completed(task: ResearchTask) -> bool:
+    return any(_command_output_completed(item.get("output")) for item in task.command_outputs)
+
+
+def _command_output_completed(output: Any) -> bool:
+    return isinstance(output, dict) and output.get("status") == "completed" and output.get("exit_code") == 0
+
+
+def _command_repair_context(base_context: str, command_outputs: list[dict[str, Any]]) -> str:
+    last = command_outputs[-1] if command_outputs else {}
+    output = last.get("output") if isinstance(last, dict) else {}
+    if not isinstance(output, dict):
+        output = {}
+    failure = {
+        "attempt": last.get("attempt"),
+        "command": output.get("command") or (last.get("plan") or {}).get("command"),
+        "exit_code": output.get("exit_code"),
+        "timed_out": output.get("timed_out"),
+        "stdout": str(output.get("stdout") or "")[:3000],
+        "stderr": str(output.get("stderr") or "")[:3000],
+    }
+    return "\n".join(
+        [
+            base_context,
+            "",
+            "Previous shell command failed. Generate one repaired command.",
+            "Do not repeat the same command unless the failure was clearly transient.",
+            "Previous failure:",
+            json.dumps(failure, ensure_ascii=False),
+        ]
+    )
 
 
 def _extract_gene_ids(value: Any) -> list[str]:
@@ -732,6 +845,14 @@ def _research_tool_catalog(providers: list[str], skills: list[SkillSpec]) -> lis
             "trigger": "Use before public web evidence gathering.",
         }
     ]
+    catalog.append(
+        {
+            "name": COMMAND_TOOL_NAME,
+            "type": "command",
+            "description": "Run a safe sandboxed shell command for local file inspection, counting, conversion, and CLI glue work.",
+            "trigger": "Use for local command-line processing, checking files, counting records, format conversion, or running existing local CLI tools.",
+        }
+    )
     provider_names = [str(provider).strip().lower() for provider in providers if str(provider).strip()] or ["tavily", "quark"]
     provider_tools = {
         "tavily": {
@@ -813,12 +934,17 @@ def _bounded_task_tools(
         return []
     if not selected:
         return _infer_task_tools(task_text, catalog)
+    if COMMAND_TOOL_NAME in selected and len(selected) > 1:
+        return [COMMAND_TOOL_NAME]
     if len(selected) <= 4:
         return selected
 
     by_name = {str(item.get("name") or ""): item for item in catalog}
     skill_tools = [name for name in selected if by_name.get(name, {}).get("type") == "skill"]
     search_tools = [name for name in selected if by_name.get(name, {}).get("type") == "search"]
+    command_tools = [name for name in selected if by_name.get(name, {}).get("type") == "command"]
+    if command_tools:
+        return command_tools[:1]
     if _looks_like_search_task(task_text):
         return _dedupe_tool_names(search_tools)[:3]
     if skill_tools:
@@ -942,6 +1068,8 @@ def _infer_task_tools(task_text: str, catalog: list[dict[str, Any]]) -> list[str
 def _tool_allowed_for_task(name: str, task_text: str) -> bool:
     if name in SEARCH_TOOL_NAMES:
         return True
+    if name in COMMAND_TOOL_NAMES:
+        return True
     rules = {
         "blast_query": ("blast", "sequence", "fasta", "alignment", "序列", "比对"),
         "primer_query": ("primer", "pcr", "qpcr", "引物"),
@@ -1021,8 +1149,12 @@ def _task_uses_search(task: ResearchTask) -> bool:
     return any(tool in SEARCH_TOOL_NAMES for tool in task.tools)
 
 
+def _task_uses_command(task: ResearchTask) -> bool:
+    return any(tool in COMMAND_TOOL_NAMES for tool in task.tools)
+
+
 def _task_uses_skill(task: ResearchTask) -> bool:
-    return any(tool and tool not in SEARCH_TOOL_NAMES for tool in task.tools)
+    return any(tool and tool not in SEARCH_TOOL_NAMES and tool not in COMMAND_TOOL_NAMES for tool in task.tools)
 
 
 def _research_tools(providers: list[str]) -> list[str]:

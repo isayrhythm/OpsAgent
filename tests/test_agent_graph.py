@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.agents import agent_graph
 from backend.app.services.skill_loader import SkillSpec
@@ -113,6 +115,74 @@ def test_generated_skill_failure_retries_once_when_evaluator_requests_it(monkeyp
     assert calls["retry"] == 1
     assert result["skill_output"]["mode"] == "generated_code_retry"
     assert result["skill_output"]["result"] == {"ok": True}
+
+
+def test_agent_graph_routes_explicit_directory_request_to_command_tool(monkeypatch) -> None:
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [])
+
+    async def route(*_args, **_kwargs):
+        skill = agent_graph.command_tool_spec()
+        return {
+            "skill_name": skill.name,
+            "skill_names": [skill.name],
+            "skills": [skill],
+            "route_reason": "LLM selected command tool",
+        }
+
+    async def fake_plan(task, context, history, llm):
+        assert task["tools"] == ["Shell Command"]
+        return SimpleNamespace(command="pwd && ls -la", reason="list directory")
+
+    async def fake_execute(command, **kwargs):
+        assert command == "pwd && ls -la"
+        return {
+            "status": "completed",
+            "analysis": "shell_command",
+            "command": command,
+            "exit_code": 0,
+            "stdout": "/workspace\nREADME.md\n",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(agent_graph, "route_registered_skills", route)
+    monkeypatch.setattr(agent_graph, "plan_shell_command", fake_plan)
+    monkeypatch.setattr(agent_graph, "execute_shell_command", fake_execute)
+
+    graph = agent_graph.build_agent_graph(OfflineLLM(), emit)
+    result = asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "看看当前目录",
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+                "search": {"mode": "off", "providers": []},
+            }
+        )
+    )
+
+    assert result["route_mode"] == "command"
+    assert result["command_outputs"][0]["output"]["stdout"] == "/workspace\nREADME.md\n"
+    assert "README.md" in result["answer"]
+
+
+def test_agent_graph_does_not_route_command_by_keyword_without_llm(monkeypatch) -> None:
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [])
+
+    graph = agent_graph.build_agent_graph(OfflineLLM(), emit)
+
+    with pytest.raises(RuntimeError, match="router model is unavailable"):
+        asyncio.run(
+            graph.ainvoke(
+                {
+                    "message": "看看当前目录",
+                    "history": [],
+                    "attachments": [],
+                    "detached_files": [],
+                    "search": {"mode": "off", "providers": []},
+                }
+            )
+        )
 
 
 def test_research_path_skill_emits_ui_steps(monkeypatch) -> None:

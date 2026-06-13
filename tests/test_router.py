@@ -29,6 +29,14 @@ class FakeRouterLLM:
         return self.response
 
 
+class FailingRouterLLM:
+    available = True
+    settings = Settings()
+
+    async def chat(self, *args, **kwargs):
+        raise RuntimeError("DeepSeek 402 Insufficient Balance")
+
+
 def make_skill(name: str, description: str) -> SkillSpec:
     return SkillSpec(
         name=name,
@@ -91,6 +99,13 @@ def test_invalid_router_json_raises_instead_of_fallback() -> None:
 
     with pytest.raises(RuntimeError, match="invalid JSON"):
         asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], llm))
+
+
+def test_router_request_errors_are_not_reported_as_invalid_json() -> None:
+    skill = make_skill("query_gene_info", "query gene info")
+
+    with pytest.raises(RuntimeError, match="Insufficient Balance"):
+        asyncio.run(route_skill("解释一下大模型量化模型是什么", [skill], FailingRouterLLM()))
 
 
 def test_router_includes_data_profiles_for_skill_selection() -> None:

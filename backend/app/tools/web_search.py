@@ -17,10 +17,22 @@ from backend.app.config import (
     WEB_SEARCH_PROVIDER,
 )
 from backend.app.schemas import ChatHistoryMessage
+from backend.app.tools.tool_runner import ToolRetryPolicy, ToolRunnerError, run_tool
 
 
 class WebSearchError(RuntimeError):
     pass
+
+
+# 搜索是外部 I/O，timeout、网络抖动、429、5xx 可以重试。
+# 认证、配置、请求格式错误要快速失败，不做无意义重试。
+SEARCH_RETRY_POLICY = ToolRetryPolicy(
+    max_attempts=3,
+    initial_delay_seconds=0.4,
+    backoff_multiplier=2.0,
+    retry_exceptions=(httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError),
+    retry_if_exception=lambda exc: _is_retryable_http_error(exc),
+)
 
 
 async def search_web(
@@ -327,15 +339,19 @@ async def _search_tavily(query: str, *, max_results: int = 6, search_depth: str 
         "Content-Type": "application/json",
     }
 
-    try:
+    async def request() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             response = await client.post(f"{TAVILY_BASE_URL.rstrip('/')}/search", json=payload, headers=headers)
-            if response.status_code == 400 and search_depth != "basic":
+            if response.status_code == 400 and payload.get("search_depth") != "basic":
                 payload["search_depth"] = "basic"
                 response = await client.post(f"{TAVILY_BASE_URL.rstrip('/')}/search", json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
-    except httpx.HTTPError as exc:
+            return data if isinstance(data, dict) else {}
+
+    try:
+        data = await run_tool("Tavily Search", request, policy=SEARCH_RETRY_POLICY)
+    except ToolRunnerError as exc:
         raise WebSearchError(f"Tavily search failed: {exc}") from exc
 
     results = []
@@ -385,12 +401,16 @@ async def _search_quark(
         f"{QUARK_SEARCH_WORKSPACE}/web-search/{QUARK_SEARCH_SERVICE_ID}"
     )
 
-    try:
+    async def request() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
             response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
-    except httpx.HTTPError as exc:
+            return data if isinstance(data, dict) else {}
+
+    try:
+        data = await run_tool("Quark Search", request, policy=SEARCH_RETRY_POLICY)
+    except ToolRunnerError as exc:
         raise WebSearchError(f"Quark search failed: {exc}") from exc
 
     return {
@@ -494,6 +514,15 @@ def _string_from_keys(item: dict[str, Any], keys: tuple[str, ...]) -> str:
             if parts:
                 return " ".join(parts)
     return ""
+
+
+def _is_retryable_http_error(exc: BaseException) -> bool:
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status_code = exc.response.status_code
+        return status_code == 429 or 500 <= status_code < 600
+    return False
 
 
 def format_web_search_context(search_result: dict[str, Any]) -> str:
