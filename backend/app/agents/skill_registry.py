@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.router import route_skill
 from backend.app.services.skill_loader import SkillSpec, load_skill, load_skill_catalog
 

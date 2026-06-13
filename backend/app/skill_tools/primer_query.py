@@ -10,7 +10,7 @@ import pyarrow.dataset as ds
 
 from backend.app.config import DATA_DIR
 from backend.app.llm.calls import chat_json
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.id_mapping import with_id_mapping_summary
 
 

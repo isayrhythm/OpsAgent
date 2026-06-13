@@ -1,7 +1,17 @@
 from pathlib import Path
 
 from backend.app.schemas import UploadedFileSummary
-from backend.app.services.data_intake import intake_uploaded_file, pdf_context_for_history, profile_uploaded_files
+from backend.app.services.skill_loader import load_skill
+from backend.app.tools.file_context import (
+    inspect_uploaded_file,
+    pdf_context_for_history,
+    profile_uploaded_files,
+    transform_uploaded_file_for_skill,
+)
+
+
+def load_test_skill(name: str):
+    return load_skill(Path("skill") / f"{name}.md")
 
 
 def write_text_pdf(path: Path, text: str) -> None:
@@ -27,7 +37,7 @@ def write_text_pdf(path: Path, text: str) -> None:
     path.write_bytes(content)
 
 
-def test_profiles_proteomics_expression_matrix_fixture() -> None:
+def test_file_inspector_profiles_table_shape_without_binding_analysis_skill() -> None:
     matches = list(Path("data").glob("40430*/input/Leaf.report.pg_matrix.tsv"))
     if not matches:
         return
@@ -43,14 +53,16 @@ def test_profiles_proteomics_expression_matrix_fixture() -> None:
     profile = profile_uploaded_files([attachment])[0]
 
     assert profile["status"] == "profiled"
-    assert profile["data_family"] == "proteomics"
-    assert profile["data_type"] == "expression_matrix"
-    assert profile["recommended_skills"] == ["differential_protein_analysis"]
-    assert profile["sample_groups"]["WT"] == ["WT1-Y", "WT2-Y", "WT3-Y"]
-    assert profile["sample_groups"]["MT"] == ["MT1-Y", "MT2-Y", "MT3-Y"]
+    assert profile["file_kind"] == "table"
+    assert profile["data_type"] == "table"
+    assert profile["recommended_skills"] == []
+    assert "standard_files" not in profile
+    assert "Protein.Names" in profile["columns"]
+    assert profile["possible_sample_groups"]["WT"] == ["WT1-Y", "WT2-Y", "WT3-Y"]
+    assert profile["possible_sample_groups"]["MT"] == ["MT1-Y", "MT2-Y", "MT3-Y"]
 
 
-def test_intake_retries_sparse_matrix_until_standard_matrix_is_ready(tmp_path) -> None:
+def test_file_transformer_uses_schema_plan_for_sparse_matrix(tmp_path) -> None:
     source = tmp_path / "sparse_proteomics.csv"
     source.write_text(
         "\n".join(
@@ -72,15 +84,18 @@ def test_intake_retries_sparse_matrix_until_standard_matrix_is_ready(tmp_path) -
         path=str(source),
     )
 
-    intake = intake_uploaded_file(attachment)
+    intake = transform_uploaded_file_for_skill(attachment, load_test_skill("differential_protein_analysis"))
 
+    assert intake is not None
     assert intake["status"] == "ready"
-    assert [attempt["status"] for attempt in intake["attempts"]] == ["failed", "completed"]
+    assert [attempt["status"] for attempt in intake["attempts"]] == ["completed"]
+    assert intake["adapter"]["plan"]["target_adapter"] == "differential_analysis_input"
+    assert intake["adapter"]["plan"]["target_data_family"] == "proteomics"
     assert Path(intake["standard_files"]["matrix"]).is_file()
     assert Path(intake["standard_files"]["sample_metadata"]).is_file()
 
 
-def test_intake_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path) -> None:
+def test_file_transformer_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path) -> None:
     source = tmp_path / "rice_counts.tsv"
     source.write_text(
         "\n".join(
@@ -101,7 +116,8 @@ def test_intake_preserves_blank_header_gene_id_column_for_counts_matrix(tmp_path
         path=str(source),
     )
 
-    intake = intake_uploaded_file(attachment)
+    intake = transform_uploaded_file_for_skill(attachment, load_test_skill("differential_transcriptomics_analysis"))
+    assert intake is not None
     matrix_text = Path(intake["standard_files"]["matrix"]).read_text(encoding="utf-8")
 
     assert intake["status"] == "ready"
@@ -134,16 +150,16 @@ def test_trait_rank_table_stays_low_confidence_without_analysis_skill(tmp_path) 
         path=str(source),
     )
 
-    intake = intake_uploaded_file(attachment)
+    intake = inspect_uploaded_file(attachment)
 
     assert intake["status"] == "profiled"
-    assert intake["data_type"] == "expression_matrix"
-    assert intake["confidence"] == "low"
+    assert intake["data_type"] == "table"
+    assert intake["confidence"] == "unconfirmed"
     assert intake["analysis_ready"] is False
     assert intake["recommended_skills"] == []
-    assert intake["capabilities"] == []
+    assert intake["capabilities"] == ["table_preview"]
     assert "standard_files" not in intake
-    assert any("性状" in warning or "复样" in warning for warning in intake["warnings"])
+    assert intake["columns"][:2] == ["feature_id", "100seed_weight"]
 
 
 def test_pdf_intake_extracts_text_and_context(tmp_path) -> None:
@@ -157,14 +173,14 @@ def test_pdf_intake_extracts_text_and_context(tmp_path) -> None:
         path=str(source),
     )
 
-    intake = intake_uploaded_file(attachment)
+    intake = inspect_uploaded_file(attachment)
     ready_attachment = attachment.model_copy(update={"intake": intake})
     context = pdf_context_for_history([ready_attachment])
 
     assert intake["status"] == "ready"
-    assert intake["data_family"] == "literature"
+    assert intake["data_family"] == "document"
     assert intake["data_type"] == "pdf_document"
-    assert intake["capabilities"] == ["pdf_literature_context"]
+    assert intake["capabilities"] == ["text_extraction"]
     assert Path(intake["text_file"]).is_file()
     assert "HY2 regulates photomorphogenesis" in intake["text_excerpt"]
     assert "PDF 文献上下文" in context
@@ -182,7 +198,7 @@ def test_pdf_intake_reports_unextractable_pdf(tmp_path) -> None:
         path=str(source),
     )
 
-    intake = intake_uploaded_file(attachment)
+    intake = inspect_uploaded_file(attachment)
 
     assert intake["status"] == "failed"
     assert intake["data_type"] == "pdf_document"
@@ -203,12 +219,12 @@ def test_fasta_intake_profiles_multiple_sequences_for_blast(tmp_path) -> None:
         path=str(source),
     )
 
-    intake = intake_uploaded_file(attachment)
+    intake = inspect_uploaded_file(attachment)
 
     assert intake["status"] == "ready"
     assert intake["data_family"] == "sequence"
     assert intake["data_type"] == "fasta_sequences"
-    assert intake["recommended_skills"] == ["blast_query"]
-    assert intake["capabilities"] == ["blast_query"]
+    assert intake["recommended_skills"] == []
+    assert intake["capabilities"] == ["sequence_preview"]
     assert intake["sequence_count"] == 2
     assert [item["label"] for item in intake["sequences_preview"]] == ["rice-dna", "protein-a"]

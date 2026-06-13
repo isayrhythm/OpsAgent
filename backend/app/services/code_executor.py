@@ -13,7 +13,7 @@ from backend.app.config import DATA_DIR, EXECUTION_TIMEOUT_SECONDS, PROJECT_ROOT
 from backend.app.llm.calls import complete_text
 from backend.app.llm.prompts import CODE_GENERATOR_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.id_mapping import enrich_skill_output_with_id_mapping
 from backend.app.services.result_evaluator import compact_value
 from backend.app.services.skill_loader import SkillSpec
@@ -155,7 +155,7 @@ async def generate_skill_code(
             ),
         },
     ]
-    status_text = f"正在重新调用 {skill.name}" if is_retry else f"正在调用 {skill.name}"
+    status_text = f"Retrying Skill: {skill.name}" if is_retry else f"Running Skill: {skill.name}"
 
     async def emit_delta(delta: str) -> None:
         if emit is not None:

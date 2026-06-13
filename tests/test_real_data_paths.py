@@ -6,7 +6,7 @@ import pytest
 
 from backend.app.config import DATA_DIR
 from backend.app.skill_tools import gene_mutant_query, gene_phenotype_prediction, primer_query
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 
 
 def test_gene_trans_path_contract():

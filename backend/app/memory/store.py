@@ -11,7 +11,7 @@ from typing import BinaryIO
 
 from backend.app.config import MEMORY_DIR
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
-from backend.app.services.data_intake import pdf_context_for_history
+from backend.app.tools.file_context import pdf_context_for_history
 
 
 def _safe_segment(value: str) -> str:

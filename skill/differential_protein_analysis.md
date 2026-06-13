@@ -16,13 +16,13 @@ data_paths: uploaded proteomics expression matrix
 ## Contract
 
 - 输入：用户上传的蛋白组定量矩阵 CSV/TSV/XLSX，以及用户当前分析请求。
-- 前置：路由前必须先查看 data_profiles。只有上传文件 intake 已完成，且被识别为 `data_family=proteomics`、`data_type=expression_matrix` 时才调用本 skill。
+- 前置：路由前查看 File Inspector 生成的通用 `data_profiles`；真正的表达矩阵 schema 校验、样本列识别、分组和标准矩阵生成由内置 File Transformer 根据本 skill 的说明和输入契约在执行前完成。
 - 输出：JSON/dict，包含每个 comparison 的差异分析 summary、输出 CSV 路径、可点击 HTML 报告 URL。
 
 ## Behavior
 
 - 该 skill 不使用 LLM 生成分析代码。
-- 上传阶段的 Python intake 已负责识别分隔符、表头、蛋白注释列、数值样本列、样本分组，并生成标准矩阵。
+- File Transformer 负责根据本 skill 的说明和输入契约识别分隔符、表头、蛋白注释列、数值样本列、样本分组，并生成标准矩阵。
 - R 负责确定性差异分析：均值、fold change、log2 fold change、Welch t-test、BH 校正、上调/下调判定。
 - HTML 报告包含 comparison selector、summary、火山图、热图和结果表下载链接。
 - 两个分组时默认执行单个 comparison。三个及以上分组若能按名称自动配对，例如 `MT-D/WT-D`、`MT-C/WT-C`，默认执行这些配对；否则用户请求必须明确比较关系，例如 `MT1 vs WT` 和 `MT2 vs WT`。
@@ -38,7 +38,7 @@ data_paths: uploaded proteomics expression matrix
 
 Command-line script: `backend/app/r/differential_protein.R`.
 
-R 输入固定为 intake 产出的矩阵、样本 metadata 和 executor 生成的比较表：
+R 输入固定为 File Transformer 产出的矩阵、样本 metadata 和 executor 生成的比较表：
 
 - `standard_matrix.csv`：前三列为 `feature_id`、`feature_name`、`description`，其余列为样本定量值。
 - `sample_metadata.csv`：两列为 `sample`、`condition`。

@@ -9,7 +9,7 @@ from backend.app.memory.store import MemoryStore
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.schemas import TaskEvent
 from backend.app.agents.agent_graph import build_agent_graph
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 
 
 @dataclass

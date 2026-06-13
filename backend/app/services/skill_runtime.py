@@ -7,7 +7,8 @@ from typing import Any
 
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.skill_tools.blast_query import classify_blast_query, run_blast_query
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
+from backend.app.tools.file_context import profile_uploaded_files, transform_attachments_for_skill
 from backend.app.skill_tools.differential_arguments import resolve_differential_arguments
 from backend.app.skill_tools.differential_protein import run_differential_protein_analysis
 from backend.app.skill_tools.differential_transcriptomics import run_differential_transcriptomics_analysis
@@ -54,6 +55,7 @@ async def execute_registered_skill(skill: SkillSpec, context: SkillExecutionCont
     binding = SKILL_EXECUTORS.get(skill.executor)
     if binding is None:
         raise SkillContractError(f"Skill executor is not registered: {skill.executor or skill.name}")
+    context = await _prepare_context_for_skill(skill, context)
     invocation = await _resolve_invocation(skill, context)
     _validate_contract(invocation.arguments, skill.input_schema, f"{skill.name} input")
     result = await binding.run(invocation, context)
@@ -68,6 +70,36 @@ async def execute_registered_skill(skill: SkillSpec, context: SkillExecutionCont
     }
 
 
+async def _prepare_context_for_skill(skill: SkillSpec, context: SkillExecutionContext) -> SkillExecutionContext:
+    # File Transformer：只有具体 skill 被选中后，才把通用文件上下文转换成该 skill 的输入结构。
+    prepared_attachments = await transform_attachments_for_skill(context.attachments, skill, context.llm)
+    if prepared_attachments is context.attachments:
+        return context
+    prepared_profiles = await asyncio.to_thread(profile_uploaded_files, prepared_attachments)
+    if context.emit is not None:
+        filenames = [item.filename for item in context.attachments]
+        await context.emit(
+            "progress",
+            5,
+            f"Running File Transformer for {skill.name}",
+            {"agent": "File Transformer", "agent_state": "running", "target_skill": skill.name, "files": filenames},
+        )
+        await context.emit(
+            "progress",
+            5,
+            f"File Transformer Completed for {skill.name}",
+            {"agent": "File Transformer", "agent_state": "done", "target_skill": skill.name, "files": filenames},
+        )
+    return SkillExecutionContext(
+        message=context.message,
+        history=context.history,
+        attachments=prepared_attachments,
+        data_profiles=prepared_profiles,
+        llm=context.llm,
+        emit=context.emit,
+    )
+
+
 async def _resolve_invocation(skill: SkillSpec, context: SkillExecutionContext) -> SkillInvocation:
     if skill.argument_resolver == "message":
         arguments = {"message": _message_with_recent_focus(context)}
@@ -76,7 +108,7 @@ async def _resolve_invocation(skill: SkillSpec, context: SkillExecutionContext) 
             await context.emit(
                 "progress",
                 5,
-                f"正在解析 {skill.name} 调用参数",
+                f"Resolving Skill Arguments: {skill.name}",
                 {"agent": skill.name, "agent_state": "running"},
             )
         arguments = await resolve_differential_arguments(

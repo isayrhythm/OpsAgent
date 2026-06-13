@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.app.schemas import TaskEvent, UploadedFileSummary
-from backend.app.services.data_intake import intake_uploaded_file
+from backend.app.tools.file_context import inspect_uploaded_file
 
 
 UploadMetadataWriter = Callable[[UploadedFileSummary], None]
@@ -46,10 +46,10 @@ class UploadIntakeManager:
     async def _run(self, state: UploadIntakeState) -> None:
         ready: list[UploadedFileSummary] = []
         try:
-            await self._emit(state, "progress", 1, f"已保存 {len(state.uploads)} 个上传文件，开始 intake")
+            await self._emit(state, "progress", 1, f"Reading File Context for {len(state.uploads)} upload(s)")
             for index, item in enumerate(state.uploads, start=1):
-                await self._emit(state, "progress", 2, f"正在 intake {item.filename} ({index}/{len(state.uploads)})")
-                intake = await asyncio.to_thread(intake_uploaded_file, item)
+                await self._emit(state, "progress", 2, f"Inspecting File: {item.filename} ({index}/{len(state.uploads)})")
+                intake = await asyncio.to_thread(inspect_uploaded_file, item)
                 ready_item = item.model_copy(update={"intake": intake})
                 await asyncio.to_thread(state.write_metadata, ready_item)
                 ready.append(ready_item)
@@ -57,17 +57,17 @@ class UploadIntakeManager:
                     state,
                     "progress",
                     3,
-                    f"{item.filename} intake {intake.get('status', 'completed')}",
+                    f"File Context {intake.get('status', 'completed')}: {item.filename}",
                     {"file_id": item.file_id, "intake_status": intake.get("status", "unknown")},
                 )
             await self._emit(
                 state,
                 "result",
                 4,
-                "上传文件 intake 完成",
+                "File Context Ready",
                 {"files": [item.model_dump(mode="json") for item in ready]},
             )
         except Exception as exc:
-            await self._emit(state, "error", 999, f"上传文件 intake 失败: {exc}")
+            await self._emit(state, "error", 999, f"File Context failed: {exc}")
         finally:
             state.done = True

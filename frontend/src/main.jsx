@@ -555,9 +555,12 @@ function agentStatus(payload, activeAgents) {
   }
   if (agents.length === 1) {
     const [name, isRetry] = agents[0];
-    return isRetry ? `正在重新调用 ${name}` : `正在调用 ${name}`;
+    if (state !== "done" && payload.status && String(payload.status).trim()) {
+      return payload.status;
+    }
+    return isRetry ? `Retrying ${name}` : `Running ${name}`;
   }
-  return `正在调用 ${agents.length} 个工具：${agents.map(([name]) => name).join("、")}`;
+  return `Running ${agents.length} tools: ${agents.map(([name]) => name).join(", ")}`;
 }
 
 function App() {
@@ -874,7 +877,7 @@ function App() {
         throw new Error(`HTTP ${response.status}`);
       }
       const payload = await response.json();
-      setUploadForSession(session.id, "文件已保存，等待 intake", true);
+      setUploadForSession(session.id, "Files saved; waiting for File Inspector", true);
       await listenToUploadIntake(payload.events_url, session.id);
     } catch (error) {
       setUploadForSession(session.id, `上传失败：${error.message}`, false);
@@ -894,7 +897,7 @@ function App() {
 
       source.addEventListener("progress", (event) => {
         const payload = JSON.parse(event.data);
-        setUploadForSession(sessionId, payload.status || "正在 intake 上传文件", true);
+        setUploadForSession(sessionId, payload.status || "Reading File Context", true);
       });
 
       source.addEventListener("result", (event) => {
@@ -907,7 +910,7 @@ function App() {
           detachedFiles: (item.detachedFiles || []).filter((file) => !uploadedNames.has(file.filename)),
         }));
         receivedResult = true;
-        setUploadForSession(sessionId, payload.status || "上传文件 intake 完成", false);
+        setUploadForSession(sessionId, payload.status || "File Context Ready", false);
         clearUploadForSessionSoon(sessionId);
       });
 

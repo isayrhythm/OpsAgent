@@ -116,9 +116,11 @@ def test_router_includes_data_profiles_for_skill_selection() -> None:
     profiles = [
         {
             "filename": "matrix.csv",
-            "data_family": "proteomics",
-            "data_type": "expression_matrix",
-            "recommended_skills": ["differential_protein_analysis"],
+            "file_kind": "table",
+            "data_type": "table",
+            "columns": ["Protein.Names", "WT1", "WT2", "MT1", "MT2"],
+            "numeric_columns_preview": ["WT1", "WT2", "MT1", "MT2"],
+            "possible_sample_groups": {"WT": ["WT1", "WT2"], "MT": ["MT1", "MT2"]},
         }
     ]
 
@@ -127,7 +129,7 @@ def test_router_includes_data_profiles_for_skill_selection() -> None:
     assert decision.skill is skill
     request_messages = llm.calls[0][0][0]
     assert "data_profiles" in request_messages[1]["content"]
-    assert "proteomics" in request_messages[1]["content"]
+    assert "Protein.Names" in request_messages[1]["content"]
 
 
 def test_router_includes_detached_files_for_current_attachment_state() -> None:

@@ -5,7 +5,7 @@ from typing import Any
 
 from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import RESULT_EVALUATOR_SYSTEM_PROMPT
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 
 

@@ -16,13 +16,13 @@ data_paths: uploaded transcriptomics counts expression matrix
 ## Contract
 
 - 输入：用户上传的 RNA-seq counts 表达矩阵 CSV/TSV/TXT/XLSX，以及用户当前分析请求。
-- 前置：路由前必须先查看 `data_profiles`。只有上传文件 intake 已完成，且被识别为 `data_family=transcriptomics`、`data_type=expression_matrix` 时才调用本 skill。
+- 前置：路由前查看 File Inspector 生成的通用 `data_profiles`；真正的 counts 表达矩阵 schema 校验、样本列识别、分组和标准矩阵生成由内置 File Transformer 根据本 skill 的说明和输入契约在执行前完成。
 - 输出：JSON/dict，包含每个比较组的差异基因 summary、输出 CSV 路径、可点击 HTML 报告 URL。
 
 ## Behavior
 
 - 该 skill 不使用 LLM 生成分析代码。
-- 上传阶段的 Python intake 负责识别分隔符、feature/gene ID 列、数值样本列、样本分组，并生成标准矩阵和样本 metadata。
+- File Transformer 负责根据本 skill 的说明和输入契约识别分隔符、feature/gene ID 列、数值样本列、样本分组，并生成标准矩阵和样本 metadata。
 - R 负责确定性 DESeq2 分析：低 counts 过滤、size factor 归一化、差异表达建模、结果筛选。
 - 如果第一次 DESeq2 执行失败，调用层只允许白名单修复：删除含非数值、缺失、负数或全零 counts 的基因行，将 counts 四舍五入为整数，然后使用同一个 R 脚本重跑一次；不会修改 DESeq2 主脚本或统计口径。
 - 如果 intake 分组可按同一后缀自动配对，例如 `MT-D/WT-D`、`MT-C/WT-C`、`MT-S/WT-S`，默认输出所有配对比较；用户明确指定两个分组时只跑该比较。
@@ -38,7 +38,7 @@ data_paths: uploaded transcriptomics counts expression matrix
 
 Command-line script: `backend/app/r/differential_transcriptomics.R`.
 
-R 输入固定为 intake 产出的文件：
+R 输入固定为 File Transformer 产出的文件：
 
 - `standard_matrix.csv`：前三列为 `feature_id`、`feature_name`、`description`，其余列为 counts 样本列。
 - `sample_metadata.csv`：两列为 `sample`、`condition`。

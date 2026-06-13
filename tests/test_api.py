@@ -28,9 +28,7 @@ def test_upload_endpoint_returns_file_metadata(tmp_path, monkeypatch) -> None:
     assert payload["files"][0]["size"] == 5
 
 
-def test_upload_endpoint_runs_intake_for_proteomics_matrix(tmp_path, monkeypatch) -> None:
-    from pathlib import Path
-
+def test_upload_endpoint_runs_file_inspector_for_table(tmp_path, monkeypatch) -> None:
     from backend.app import main
     from backend.app.memory.store import MemoryPaths, MemoryStore
 
@@ -54,11 +52,11 @@ def test_upload_endpoint_runs_intake_for_proteomics_matrix(tmp_path, monkeypatch
         events = client.get(payload["events_url"]).text.splitlines()
     result_line = next(line for index, line in enumerate(events) if events[index - 1] == "event: result")
     intake = json.loads(result_line.removeprefix("data: "))["data"]["files"][0]["intake"]
-    assert intake["status"] == "ready"
-    assert intake["data_family"] == "proteomics"
-    assert intake["sample_groups"] == {"WT": ["WT1", "WT2"], "MT": ["MT1", "MT2"]}
-    assert intake["attempts"][0]["status"] == "completed"
-    assert Path(intake["standard_files"]["matrix"]).is_file()
+    assert intake["status"] == "profiled"
+    assert intake["file_kind"] == "table"
+    assert intake["data_type"] == "table"
+    assert intake["possible_sample_groups"] == {"WT": ["WT1", "WT2"], "MT": ["MT1", "MT2"]}
+    assert "standard_files" not in intake
 
 
 def test_chat_endpoint_delegates_to_task_manager(monkeypatch) -> None:

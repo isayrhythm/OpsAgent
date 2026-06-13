@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable
 
 from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import DETERMINISTIC_ANALYSIS_ARGUMENTS_SYSTEM_PROMPT
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 
 
 Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
@@ -163,7 +163,7 @@ async def resolve_differential_arguments(
             await emit(
                 "thinking_delta",
                 5,
-                f"正在解析 {skill_name} 调用参数",
+                f"Resolving Skill Arguments: {skill_name}",
                 {"delta_length": len(json.dumps(response, ensure_ascii=False))},
             )
         return sanitize(response, groups)

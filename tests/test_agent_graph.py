@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,18 @@ class StreamingAnswerLLM:
 
     async def stream_chat(self, *_args, **_kwargs):
         yield "Research path ready."
+
+
+class CaptureFinalLLM:
+    available = True
+    settings = SimpleNamespace(answer_model="answer")
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def stream_chat(self, messages, *_args, **_kwargs):
+        self.calls.append(messages)
+        yield "整理后的命令结果"
 
 
 async def emit(*_args, **_kwargs) -> None:
@@ -164,6 +177,57 @@ def test_agent_graph_routes_explicit_directory_request_to_command_tool(monkeypat
     assert result["route_mode"] == "command"
     assert result["command_outputs"][0]["output"]["stdout"] == "/workspace\nREADME.md\n"
     assert "README.md" in result["answer"]
+
+
+def test_command_outputs_are_sent_to_final_answer_prompt(monkeypatch) -> None:
+    monkeypatch.setattr(agent_graph, "load_skill_registry", lambda: [])
+
+    async def route(*_args, **_kwargs):
+        skill = agent_graph.command_tool_spec()
+        return {
+            "skill_name": skill.name,
+            "skill_names": [skill.name],
+            "skills": [skill],
+            "route_reason": "LLM selected command tool",
+        }
+
+    async def fake_plan(task, context, history, llm):
+        return SimpleNamespace(command="pwd && ls -la", reason="list directory")
+
+    async def fake_execute(command, **kwargs):
+        return {
+            "status": "completed",
+            "analysis": "shell_command",
+            "command": command,
+            "workdir": "/workspace/OpsAgent",
+            "exit_code": 0,
+            "stdout": "README.md\nbackend\nfrontend\n",
+            "stderr": "",
+            "timed_out": False,
+        }
+
+    monkeypatch.setattr(agent_graph, "route_registered_skills", route)
+    monkeypatch.setattr(agent_graph, "plan_shell_command", fake_plan)
+    monkeypatch.setattr(agent_graph, "execute_shell_command", fake_execute)
+
+    llm = CaptureFinalLLM()
+    graph = agent_graph.build_agent_graph(llm, emit)
+    result = asyncio.run(
+        graph.ainvoke(
+            {
+                "message": "看看当前目录",
+                "history": [],
+                "attachments": [],
+                "detached_files": [],
+                "search": {"mode": "off", "providers": []},
+            }
+        )
+    )
+
+    payload = json.loads(llm.calls[0][1]["content"])
+    assert result["answer"] == "整理后的命令结果"
+    assert payload["command_outputs"][0]["output"]["stdout"] == "README.md\nbackend\nfrontend\n"
+    assert payload["command_outputs"][0]["output"]["command"] == "pwd && ls -la"
 
 
 def test_agent_graph_does_not_route_command_by_keyword_without_llm(monkeypatch) -> None:
@@ -413,7 +477,7 @@ def test_web_search_mode_keeps_skill_router_and_adds_search_context(monkeypatch)
     ]
     assert "fresh web context" in joined_context
     assert "https://example.com/result" in joined_context
-    assert any(event[2] == "正在搜索网页" for event in events)
+    assert any(str(event[2]).startswith("Running Web Search") for event in events)
     assert any(event[0] == "source_delta" and event[3]["sources"][0]["index"] == 1 for event in events)
 
 
@@ -737,7 +801,7 @@ def test_attachment_chat_prompt_exposes_intake_warnings_and_action_guard(monkeyp
         path="rank.csv",
         intake={
             "status": "ready",
-            "intake_version": 4,
+            "intake_version": 5,
             "data_family": "expression",
             "data_type": "expression_matrix",
             "confidence": "low",
@@ -760,5 +824,5 @@ def test_attachment_chat_prompt_exposes_intake_warnings_and_action_guard(monkeyp
     )
 
     assert "不要声称已经读取文件" in llm.calls[0][0]["content"]
-    assert "识别警告" in llm.calls[0][1]["content"]
+    assert "结构警告" in llm.calls[0][1]["content"]
     assert "可能是性状表" in llm.calls[0][1]["content"]

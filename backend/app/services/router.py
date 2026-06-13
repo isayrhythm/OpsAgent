@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import ROUTER_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 
 
@@ -89,6 +89,8 @@ async def route_skill(
             "trigger": skill.trigger,
             "execution_mode": skill.execution_mode,
             "data_paths": skill.data_paths,
+            "input_schema": skill.input_schema,
+            "output_schema": skill.output_schema,
         }
         for skill in skills
     ]

@@ -11,7 +11,7 @@ import pandas as pd
 
 from backend.app.config import DATA_DIR
 from backend.app.llm.calls import chat_json
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 
 
 @dataclass(frozen=True)

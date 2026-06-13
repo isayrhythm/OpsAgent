@@ -18,10 +18,16 @@ from backend.app.llm.prompts import (
 from backend.app.llm.calls import chat_json, chat_text, complete_text
 from backend.app.schemas import ChatHistoryMessage
 from backend.app.services.result_evaluator import compact_value
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.services.skill_runtime import SkillExecutionContext, execute_registered_skill
-from backend.app.tools.command_tool import COMMAND_TOOL_NAME, execute_shell_command, plan_shell_command
+from backend.app.tools.command_tool import (
+    COMMAND_TOOL_INPUT_SCHEMA,
+    COMMAND_TOOL_NAME,
+    COMMAND_TOOL_OUTPUT_SCHEMA,
+    execute_shell_command,
+    plan_shell_command,
+)
 from backend.app.tools.tool_runner import ToolRetryPolicy, run_tool
 from backend.app.tools.web_search import format_web_search_context, search_web_queries, web_search_sources
 from backend.app.tools.web_search_planner import plan_web_search
@@ -611,7 +617,7 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
         return {"intent": intent, "repair_attempts": 0}
 
     async def plan_research(state: ResearchState) -> ResearchState:
-        await emit("progress", 4, "正在制定研究计划", None)
+        await emit("progress", 4, "Planning Deep Research", {"agent": "Research Planner", "agent_state": "running"})
         plan = await planner.plan_research(
             state["message"],
             state.get("history", []),
@@ -630,8 +636,10 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
         await emit(
             "progress",
             4,
-            "研究计划已生成",
+            "Research Plan Ready",
             {
+                "agent": "Research Planner",
+                "agent_state": "done",
                 "research_plan": {
                     "summary": plan.get("summary"),
                     "tools": plan.get("tools") or [],
@@ -659,7 +667,7 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
         )
         sources = _merge_sources(tasks)
         if sources:
-            await emit("source_delta", 6, "已获取研究来源", {"sources": sources})
+            await emit("source_delta", 6, "Research Sources Ready", {"sources": sources})
         return {"tasks": tasks, "completed_tasks": [task.to_dict() for task in tasks], "sources": sources}
 
     async def evaluate_steps(state: ResearchState) -> ResearchState:
@@ -687,10 +695,10 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
         return {"tasks": [*state.get("tasks", []), *tasks], "repair_attempts": attempts + 1, "continue_research": True}
 
     async def synthesize_answer(state: ResearchState) -> ResearchState:
-        await emit("progress", 7, "正在综合研究结论", None)
+        await emit("progress", 7, "Synthesizing Research Answer", {"agent": "Research Synthesizer", "agent_state": "running"})
 
         async def emit_delta(delta: str) -> None:
-            await emit("answer_delta", 7, "输出中", {"delta": delta})
+            await emit("answer_delta", 7, "Streaming Answer", {"delta": delta})
 
         answer = await synthesizer.synthesize_answer(
             state["message"],
@@ -699,6 +707,7 @@ def build_research_graph(llm: DeepSeekClient, emit: Emit):
             state.get("evaluations", []),
             emit_delta=emit_delta,
         )
+        await emit("progress", 7, "Research Answer Ready", {"agent": "Research Synthesizer", "agent_state": "done"})
         return {"answer": answer}
 
     graph.add_node("classify_intent", classify_intent)
@@ -851,6 +860,8 @@ def _research_tool_catalog(providers: list[str], skills: list[SkillSpec]) -> lis
             "type": "command",
             "description": "Run a safe sandboxed shell command for local file inspection, counting, conversion, and CLI glue work.",
             "trigger": "Use for local command-line processing, checking files, counting records, format conversion, or running existing local CLI tools.",
+            "input_schema": COMMAND_TOOL_INPUT_SCHEMA,
+            "output_schema": COMMAND_TOOL_OUTPUT_SCHEMA,
         }
     )
     provider_names = [str(provider).strip().lower() for provider in providers if str(provider).strip()] or ["tavily", "quark"]
@@ -893,6 +904,8 @@ def _research_tool_catalog(providers: list[str], skills: list[SkillSpec]) -> lis
                 "description": skill.description,
                 "trigger": skill.trigger,
                 "execution_mode": skill.execution_mode,
+                "input_schema": getattr(skill, "input_schema", None),
+                "output_schema": getattr(skill, "output_schema", None),
             }
         )
     return catalog
@@ -912,6 +925,8 @@ def _tool_details(names: list[str], catalog: list[dict[str, Any]]) -> list[dict[
                 "type": str(item.get("type") or ""),
                 "description": str(item.get("description") or ""),
                 "trigger": str(item.get("trigger") or ""),
+                "input_schema": item.get("input_schema"),
+                "output_schema": item.get("output_schema"),
             }
         )
     return details

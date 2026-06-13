@@ -13,6 +13,7 @@ from typing import Any
 
 from backend.app.config import (
     COMMAND_TOOL_BACKEND,
+    COMMAND_TOOL_CWD,
     COMMAND_TOOL_DOCKER_IMAGE,
     COMMAND_TOOL_ENABLED,
     COMMAND_TOOL_MAX_OUTPUT_CHARS,
@@ -22,12 +23,72 @@ from backend.app.config import (
 from backend.app.llm.calls import chat_json
 from backend.app.llm.prompts import COMMAND_TOOL_PLANNER_SYSTEM_PROMPT
 from backend.app.schemas import ChatHistoryMessage
-from backend.app.services.deepseek_client import DeepSeekClient
+from backend.app.llm.deepseek import DeepSeekClient
 from backend.app.services.skill_loader import SkillSpec
 from backend.app.tools.tool_runner import ToolRetryPolicy, run_tool
 
 
 COMMAND_TOOL_NAME = "Shell Command"
+COMMAND_TOOL_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["command"],
+    "properties": {
+        "command": {
+            "type": "string",
+            "description": "One safe shell command to run from runtime_context.command_cwd.",
+        },
+        "task_id": {
+            "type": "string",
+            "description": "Optional stable task id used only to create an isolated temporary HOME.",
+        },
+        "backend": {
+            "type": "string",
+            "enum": ["auto", "wsl", "docker", "native"],
+            "description": "Optional execution backend override.",
+        },
+        "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 300,
+            "description": "Optional command timeout.",
+        },
+        "max_output_chars": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 200000,
+            "description": "Optional stdout/stderr truncation limit.",
+        },
+    },
+}
+COMMAND_TOOL_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "status",
+        "analysis",
+        "backend",
+        "command",
+        "workdir",
+        "run_home",
+        "exit_code",
+        "timed_out",
+        "stdout",
+        "stderr",
+    ],
+    "properties": {
+        "status": {"type": "string", "enum": ["completed", "failed"]},
+        "analysis": {"type": "string", "const": "shell_command"},
+        "backend": {"type": "string", "enum": ["wsl", "docker", "native"]},
+        "command": {"type": "string"},
+        "workdir": {"type": "string", "description": "Host path of the project/current command directory."},
+        "run_home": {"type": "string", "description": "Host path used as temporary HOME for this run."},
+        "exit_code": {"type": ["integer", "null"]},
+        "timed_out": {"type": "boolean"},
+        "stdout": {"type": "string"},
+        "stderr": {"type": "string"},
+    },
+}
 COMMAND_TOOL_SPEC = SkillSpec(
     name=COMMAND_TOOL_NAME,
     description="Run one safe local shell command in an isolated working directory.",
@@ -40,6 +101,8 @@ COMMAND_TOOL_SPEC = SkillSpec(
     data_paths=[],
     path=Path("__builtin__/shell_command"),
     content="",
+    input_schema=COMMAND_TOOL_INPUT_SCHEMA,
+    output_schema=COMMAND_TOOL_OUTPUT_SCHEMA,
     answer_requirements=[
         "Return stdout, stderr, exit_code, and the executed command.",
         "Do not access secrets, environment variables, network, sudo, SSH, package managers, or destructive commands.",
@@ -69,15 +132,21 @@ async def plan_shell_command(
 ) -> CommandPlan:
     if not llm.available:
         raise RuntimeError("DeepSeek command planner model is unavailable; cannot plan shell command")
+    resolved_backend = _resolve_backend(COMMAND_TOOL_BACKEND)
+    command_cwd = COMMAND_TOOL_CWD.resolve()
     payload = {
         "task": task,
         "dependency_context": context[:5000],
+        "runtime_context": get_command_runtime_context(resolved_backend, command_cwd),
         "history": [{"role": item.role, "content": item.content} for item in history[-4:]],
         "rules": [
             "Return exactly one shell command.",
+            "The command starts in runtime_context.command_cwd. Treat that as the current project directory.",
+            "If the user asks for the current directory or current files, inspect runtime_context.command_cwd.",
+            "Use the shell syntax described by runtime_context.shell_dialect.",
             "Prefer read-only inspection, conversion, counting, listing, or local CLI checks.",
             "Do not access secrets, environment variables, network, SSH, sudo, package managers, or destructive commands.",
-            "Do not use absolute paths outside the command workdir unless explicitly provided as an allowed input.",
+            "Do not use absolute paths outside runtime_context.command_cwd unless explicitly provided as an allowed input.",
         ],
         "output_schema": {"command": "string", "reason": "short reason"},
     }
@@ -130,11 +199,12 @@ async def _execute_shell_command_once(
         raise CommandToolError("Shell command tool is disabled")
     _validate_shell_command(command)
     resolved_backend = _resolve_backend(backend or COMMAND_TOOL_BACKEND)
-    workdir = _prepare_workdir(task_id)
+    run_home = _prepare_workdir(task_id)
+    command_cwd = COMMAND_TOOL_CWD.resolve()
     timeout = timeout_seconds or COMMAND_TOOL_TIMEOUT_SECONDS
     max_chars = max_output_chars or COMMAND_TOOL_MAX_OUTPUT_CHARS
-    args, cwd = _runner_args(command, resolved_backend, workdir)
-    env = _safe_env(workdir)
+    args, cwd = _runner_args(command, resolved_backend, command_cwd)
+    env = _safe_env(run_home)
     timed_out = False
     try:
         process = await asyncio.create_subprocess_exec(
@@ -160,7 +230,8 @@ async def _execute_shell_command_once(
         "analysis": "shell_command",
         "backend": resolved_backend,
         "command": command,
-        "workdir": str(workdir),
+        "workdir": str(command_cwd),
+        "run_home": str(run_home),
         "exit_code": process.returncode,
         "timed_out": timed_out,
         "stdout": _truncate(stdout, max_chars),
@@ -224,13 +295,50 @@ def _prepare_workdir(task_id: str) -> Path:
     return workdir.resolve()
 
 
-def _runner_args(command: str, backend: str, workdir: Path) -> tuple[list[str], Path | None]:
+def get_command_runtime_context(backend: str | None = None, command_cwd: Path | None = None) -> dict[str, str]:
+    resolved_backend = _resolve_backend(backend or COMMAND_TOOL_BACKEND)
+    resolved_cwd = (command_cwd or COMMAND_TOOL_CWD).resolve()
+    return {
+        "backend": resolved_backend,
+        "host_os": platform.system(),
+        "shell_dialect": _shell_dialect(resolved_backend),
+        "command_cwd": _shell_path_for_backend(resolved_cwd, resolved_backend),
+        "command_cwd_host_path": str(resolved_cwd),
+        "temporary_home": str(COMMAND_TOOL_WORKDIR),
+    }
+
+
+def _shell_dialect(backend: str) -> str:
+    if backend in {"wsl", "docker"}:
+        return "bash/linux"
+    if backend == "native" and platform.system().lower().startswith("win") and not shutil.which("bash"):
+        return "powershell"
+    return "bash/sh"
+
+
+def _shell_path_for_backend(path: Path, backend: str) -> str:
+    if backend == "wsl" and platform.system().lower().startswith("win"):
+        return _windows_path_to_wsl(path)
+    if backend == "docker":
+        return "/workspace"
+    return str(path)
+
+
+def _windows_path_to_wsl(path: Path) -> str:
+    text = str(path.resolve()).replace("\\", "/")
+    match = re.match(r"^([A-Za-z]):/(.*)$", text)
+    if not match:
+        return text
+    return f"/mnt/{match.group(1).lower()}/{match.group(2)}"
+
+
+def _runner_args(command: str, backend: str, command_cwd: Path) -> tuple[list[str], Path | None]:
     if backend == "wsl":
-        workdir_text = _bash_quote(str(workdir))
-        wrapped = f"cd \"$(wslpath -a {workdir_text})\" && {command}"
+        command_cwd_text = _bash_quote(str(command_cwd))
+        wrapped = f"cd \"$(wslpath -a {command_cwd_text})\" && {command}"
         return ["wsl.exe", "bash", "-lc", wrapped], None
     if backend == "docker":
-        mount = f"{workdir}:/workspace"
+        mount = f"{command_cwd}:/workspace"
         return [
             "docker",
             "run",
@@ -247,10 +355,10 @@ def _runner_args(command: str, backend: str, workdir: Path) -> tuple[list[str], 
             command,
         ], None
     if shutil.which("bash"):
-        return ["bash", "-lc", command], workdir
+        return ["bash", "-lc", command], command_cwd
     if platform.system().lower().startswith("win"):
-        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command], workdir
-    return ["sh", "-lc", command], workdir
+        return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command], command_cwd
+    return ["sh", "-lc", command], command_cwd
 
 
 def _safe_env(workdir: Path) -> dict[str, str]:

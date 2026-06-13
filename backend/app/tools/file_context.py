@@ -9,7 +9,10 @@ from typing import Any
 import pandas as pd
 from pypdf import PdfReader
 
+from backend.app.llm.calls import chat_json
+from backend.app.llm.prompts import FILE_TRANSFORMER_SYSTEM_PROMPT
 from backend.app.schemas import UploadedFileSummary
+from backend.app.services.skill_loader import SkillSpec
 from backend.app.skill_tools.blast_query import (
     FASTA_SUFFIXES,
     MAX_QUERY_SEQUENCES,
@@ -23,30 +26,26 @@ SUPPORTED_TABLE_SUFFIXES = {".csv", ".tsv", ".txt", ".xlsx", ".xls", ".xlsm"}
 SUPPORTED_PDF_SUFFIXES = {".pdf"}
 SUPPORTED_FASTA_SUFFIXES = FASTA_SUFFIXES
 DEFAULT_MAX_INTAKE_ATTEMPTS = 3
-INTAKE_VERSION = 4
+INTAKE_VERSION = 5
 PDF_TEXT_EXCERPT_CHARS = 12000
 PDF_FULL_TEXT_CHARS = 80000
 PDF_MAX_PAGES = 80
+TABLE_PREVIEW_ROWS = 2000
+TABLE_SAMPLE_ROWS = 5
 
 
 def ensure_attachment_intakes(attachments: list[UploadedFileSummary]) -> list[UploadedFileSummary]:
     ready: list[UploadedFileSummary] = []
     for item in attachments:
-        if (
-            item.intake
-            and item.intake.get("status") == "ready"
-            and item.intake.get("intake_version") == INTAKE_VERSION
-        ):
+        if item.intake and item.intake.get("intake_version") == INTAKE_VERSION:
             ready.append(item)
             continue
-        ready.append(item.model_copy(update={"intake": intake_uploaded_file(item)}))
+        ready.append(item.model_copy(update={"intake": inspect_uploaded_file(item)}))
     return ready
 
 
-def intake_uploaded_file(
-    item: UploadedFileSummary,
-    max_attempts: int = DEFAULT_MAX_INTAKE_ATTEMPTS,
-) -> dict[str, Any]:
+def inspect_uploaded_file(item: UploadedFileSummary) -> dict[str, Any]:
+    """上传后的第一层文件上下文：只观察文件形态，不绑定业务 skill。"""
     if not item.path:
         return _failed_intake(item, "上传文件缺少保存路径。")
     path = Path(item.path)
@@ -57,6 +56,9 @@ def intake_uploaded_file(
     if path.suffix.lower() not in SUPPORTED_TABLE_SUFFIXES:
         return {
             "status": "skipped",
+            "intake_version": INTAKE_VERSION,
+            "file_kind": "unsupported",
+            "format": path.suffix.lower().lstrip(".") or "unknown",
             "data_family": "unknown",
             "data_type": "unsupported_file",
             "confidence": "unconfirmed",
@@ -66,13 +68,159 @@ def intake_uploaded_file(
             "capabilities": [],
         }
 
+    return inspect_table_file(item, path)
+
+
+def intake_uploaded_file(
+    item: UploadedFileSummary,
+    max_attempts: int = DEFAULT_MAX_INTAKE_ATTEMPTS,
+) -> dict[str, Any]:
+    """兼容旧调用名；现在上传阶段只做 File Inspector。"""
+    return inspect_uploaded_file(item)
+
+
+def inspect_table_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
+    profile = _base_file_context(item, path, file_kind="table")
+    try:
+        frame = read_preview_table(path, max_rows=TABLE_PREVIEW_ROWS)
+        numeric_columns = detect_numeric_sample_columns(frame)
+        if len(numeric_columns) < 4:
+            numeric_columns = detect_numeric_sample_columns(frame, min_numeric_ratio=0.2)
+        profile.update(
+            {
+                "status": "profiled",
+                "confidence": "unconfirmed",
+                "data_type": "table",
+                "shape": {
+                    "rows_preview": int(len(frame)),
+                    "columns": int(len(frame.columns)),
+                    "preview_truncated": int(len(frame)) >= TABLE_PREVIEW_ROWS,
+                },
+                "row_count_preview": int(len(frame)),
+                "column_count": int(len(frame.columns)),
+                "columns": [str(column) for column in frame.columns[:50]],
+                "columns_preview": [str(column) for column in frame.columns[:50]],
+                "sample_preview": _table_sample_preview(frame),
+                "numeric_columns_preview": numeric_columns[:40],
+                "possible_sample_groups": infer_sample_groups(numeric_columns),
+                "capabilities": ["table_preview"],
+                "reason": f"已生成通用表格上下文：预览 {len(frame)} 行、{len(frame.columns)} 列。",
+            }
+        )
+    except Exception as exc:
+        profile.update({"status": "failed", "reason": str(exc), "warnings": ["table_preview_failed"]})
+    return profile
+
+
+async def transform_attachments_for_skill(
+    attachments: list[UploadedFileSummary],
+    skill: SkillSpec,
+    llm: Any | None = None,
+    max_attempts: int = DEFAULT_MAX_INTAKE_ATTEMPTS,
+) -> list[UploadedFileSummary]:
+    """第二层 File Transformer：根据目标 skill 已有契约，把文件转成执行器需要的结构。"""
+    if not _skill_needs_file_transform(skill):
+        return attachments
+
+    transformed: list[UploadedFileSummary] = []
+    for item in attachments:
+        plan = await plan_file_transform(item, skill, llm)
+        transformed_intake = transform_uploaded_file_for_skill(
+            item,
+            skill,
+            transform_plan=plan,
+            max_attempts=max_attempts,
+        )
+        if transformed_intake is None:
+            transformed.append(item)
+        else:
+            transformed.append(item.model_copy(update={"intake": transformed_intake}))
+    return transformed
+
+
+async def plan_file_transform(
+    item: UploadedFileSummary,
+    skill: SkillSpec,
+    llm: Any | None = None,
+) -> dict[str, Any]:
+    file_context = item.intake or inspect_uploaded_file(item)
+    if llm is not None and getattr(llm, "available", False):
+        try:
+            response = await chat_json(
+                llm,
+                [
+                    {"role": "system", "content": FILE_TRANSFORMER_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "target_skill": _skill_contract_payload(skill),
+                                "file_context": file_context,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ],
+                model=llm.settings.router_model,
+                temperature=0,
+                max_tokens=900,
+            )
+            return _sanitize_transform_plan(response, item, skill)
+        except Exception:
+            pass
+    return _deterministic_transform_plan(item, skill)
+
+
+def transform_uploaded_file_for_skill(
+    item: UploadedFileSummary,
+    skill: SkillSpec | dict[str, Any],
+    transform_plan: dict[str, Any] | None = None,
+    max_attempts: int = DEFAULT_MAX_INTAKE_ATTEMPTS,
+) -> dict[str, Any] | None:
+    if not _skill_needs_file_transform(skill):
+        return None
+    target_family = _target_family_from_skill(skill)
+    if target_family is None:
+        return None
+    if not item.path:
+        return _failed_intake(item, "上传文件缺少保存路径，无法转换为分析输入。")
+    path = Path(item.path)
+    if path.suffix.lower() not in SUPPORTED_TABLE_SUFFIXES:
+        return None
+
     profile = _profile_file(item, path)
+    target_adapter = _target_adapter_from_skill(skill)
+    if target_adapter != "differential_analysis_input":
+        return None
+    plan = transform_plan or _deterministic_transform_plan(item, skill)
+    profile["adapter"] = {
+        "target_skill": _skill_name(skill),
+        "target_adapter": target_adapter,
+        "plan": plan,
+    }
     if (
         profile["status"] != "profiled"
         or profile["data_type"] != "expression_matrix"
         or profile.get("confidence") != "high"
     ):
-        return profile
+        return {
+            **profile,
+            "analysis_ready": False,
+            "recommended_skills": [],
+            "capabilities": [],
+        }
+    if profile.get("data_family") != target_family:
+        return {
+            **profile,
+            "analysis_ready": False,
+            "recommended_skills": [],
+            "capabilities": [],
+            "warnings": [
+                *(profile.get("warnings") or []),
+                f"文件更像 {profile.get('data_family')}，不匹配 {_skill_name(skill)} 需要的 {target_family}。",
+            ],
+            "reason": f"文件类型与目标 skill 不匹配：{profile.get('data_family')} -> {target_family}。",
+        }
 
     try:
         frame = read_table(path)
@@ -84,7 +232,13 @@ def intake_uploaded_file(
     intake_dir.mkdir(parents=True, exist_ok=True)
     for index, strategy in enumerate(_expression_matrix_strategies()[:max_attempts], start=1):
         try:
-            standard = _standardize_expression_matrix(frame, intake_dir, str(profile["data_family"]), strategy)
+            standard = _standardize_expression_matrix(
+                frame,
+                intake_dir,
+                target_family,
+                strategy,
+                transform_plan=plan,
+            )
             attempts.append(
                 {
                     "attempt": index,
@@ -98,6 +252,8 @@ def intake_uploaded_file(
                 {
                     "status": "ready",
                     "intake_version": INTAKE_VERSION,
+                    "file_kind": "table",
+                    "format": path.suffix.lower().lstrip(".") or "unknown",
                     "feature_count": standard["feature_count"],
                     "sample_count": standard["sample_count"],
                     "sample_groups": standard["sample_groups"],
@@ -108,7 +264,7 @@ def intake_uploaded_file(
                     "max_attempts": max_attempts,
                 }
             )
-            (intake_dir / "data_intake_output.json").write_text(
+            (intake_dir / "file_transform_output.json").write_text(
                 json.dumps(profile, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
@@ -127,7 +283,7 @@ def intake_uploaded_file(
         **profile,
         "status": "failed",
         "analysis_ready": False,
-        "reason": f"{max_attempts} 次 intake 后仍未得到可用于 R 分析的标准矩阵。",
+        "reason": f"{max_attempts} 次 File Transformer 后仍未得到可用于分析的标准矩阵。",
         "attempts": attempts,
         "max_attempts": max_attempts,
         "recommended_skills": [],
@@ -150,7 +306,7 @@ def profile_uploaded_files(attachments: list[UploadedFileSummary]) -> list[dict[
         elif suffix in SUPPORTED_FASTA_SUFFIXES:
             profiles.append(prompt_profile(item, intake_fasta_file(item, path)))
         elif suffix in SUPPORTED_TABLE_SUFFIXES:
-            profiles.append(prompt_profile(item, _profile_file(item, path)))
+            profiles.append(prompt_profile(item, inspect_table_file(item, path)))
     return profiles
 
 
@@ -161,6 +317,9 @@ def prompt_profile(item: UploadedFileSummary, intake: dict[str, Any]) -> dict[st
         "content_type": item.content_type,
         "size": item.size,
         "path": item.path,
+        "file_kind": intake.get("file_kind"),
+        "format": intake.get("format"),
+        "shape": intake.get("shape", {}),
         "status": intake.get("status", "unknown"),
         "data_family": intake.get("data_family", "unknown"),
         "data_type": intake.get("data_type", "unknown_table"),
@@ -168,7 +327,11 @@ def prompt_profile(item: UploadedFileSummary, intake: dict[str, Any]) -> dict[st
         "analysis_ready": bool(intake.get("analysis_ready")),
         "reason": intake.get("reason", ""),
         "warnings": intake.get("warnings", []),
+        "columns": intake.get("columns", []),
         "columns_preview": intake.get("columns_preview", []),
+        "sample_preview": intake.get("sample_preview", []),
+        "numeric_columns_preview": intake.get("numeric_columns_preview", []),
+        "possible_sample_groups": intake.get("possible_sample_groups", {}),
         "sample_groups": intake.get("sample_groups", {}),
         "feature_count": intake.get("feature_count"),
         "sample_count": intake.get("sample_count"),
@@ -193,6 +356,8 @@ def intake_fasta_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
         "filename": item.filename,
         "source_path": str(path),
         "intake_version": INTAKE_VERSION,
+        "file_kind": "sequence",
+        "format": path.suffix.lower().lstrip(".") or "fasta",
         "status": "failed",
         "data_family": "sequence",
         "data_type": "fasta_sequences",
@@ -226,9 +391,9 @@ def intake_fasta_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
         "confidence": "high",
         "sequence_count": len(previews),
         "sequences_preview": previews,
-        "recommended_skills": ["blast_query"],
-        "capabilities": ["blast_query"],
-        "reason": f"已识别 {len(previews)} 条 FASTA 序列，可用于本地 BLAST 比对。",
+        "recommended_skills": [],
+        "capabilities": ["sequence_preview"],
+        "reason": f"已识别 {len(previews)} 条 FASTA 序列，已生成通用序列上下文。",
     }
 
 
@@ -238,8 +403,10 @@ def intake_pdf_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
         "filename": item.filename,
         "source_path": str(path),
         "intake_version": INTAKE_VERSION,
+        "file_kind": "pdf",
+        "format": "pdf",
         "status": "failed",
-        "data_family": "literature",
+        "data_family": "document",
         "data_type": "pdf_document",
         "confidence": "unconfirmed",
         "analysis_ready": False,
@@ -304,7 +471,7 @@ def intake_pdf_file(item: UploadedFileSummary, path: Path) -> dict[str, Any]:
             "title": title,
             "text_excerpt": full_text[:PDF_TEXT_EXCERPT_CHARS],
             "text_file": str(text_file),
-            "capabilities": ["pdf_literature_context"],
+            "capabilities": ["text_extraction"],
             "warnings": warnings,
             "reason": f"已提取 PDF 文本：{min(page_count, PDF_MAX_PAGES)}/{page_count} 页，约 {len(full_text)} 字符。",
         }
@@ -349,6 +516,232 @@ def pdf_context_for_history(attachments: list[UploadedFileSummary]) -> str:
     if not sections:
         return ""
     return "PDF 文献上下文（由上传文件解析得到，后续回答可引用；不要编造未出现的信息）：\n" + "\n\n".join(sections)
+
+
+def _base_file_context(item: UploadedFileSummary, path: Path, *, file_kind: str) -> dict[str, Any]:
+    return {
+        "file_id": item.file_id,
+        "filename": item.filename,
+        "source_path": str(path),
+        "intake_version": INTAKE_VERSION,
+        "file_kind": file_kind,
+        "format": path.suffix.lower().lstrip(".") or "unknown",
+        "status": "unread",
+        "data_family": "unknown",
+        "data_type": file_kind,
+        "confidence": "unconfirmed",
+        "analysis_ready": False,
+        "recommended_skills": [],
+        "capabilities": [],
+        "warnings": [],
+        "reason": "",
+    }
+
+
+def _table_sample_preview(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    preview = frame.head(TABLE_SAMPLE_ROWS)
+    rows: list[dict[str, Any]] = []
+    for record in preview.to_dict(orient="records"):
+        rows.append(
+            {
+                str(key): None if _is_missing_value(value) else str(value)[:200]
+                for key, value in record.items()
+            }
+        )
+    return rows
+
+
+def _is_missing_value(value: Any) -> bool:
+    try:
+        return bool(pd.isna(value))
+    except Exception:
+        return value is None
+
+
+def _skill_name(skill: SkillSpec | dict[str, Any]) -> str:
+    if isinstance(skill, SkillSpec):
+        return skill.name
+    return str(skill.get("name") or skill.get("target_skill") or "unknown")
+
+
+def _skill_text(skill: SkillSpec | dict[str, Any]) -> str:
+    if isinstance(skill, SkillSpec):
+        return "\n".join(
+            [
+                skill.name,
+                skill.description,
+                skill.trigger,
+                " ".join(skill.data_paths),
+                skill.content,
+            ]
+        ).lower()
+    return json.dumps(skill, ensure_ascii=False).lower()
+
+
+def _skill_needs_file_transform(skill: SkillSpec | dict[str, Any]) -> bool:
+    text = _skill_text(skill)
+    return (
+        "standard_matrix.csv" in text
+        and "sample_metadata.csv" in text
+        and ("differential" in text or "差异" in text)
+    )
+
+
+def _target_adapter_from_skill(skill: SkillSpec | dict[str, Any]) -> str:
+    return "differential_analysis_input" if _skill_needs_file_transform(skill) else ""
+
+
+def _target_family_from_skill(skill: SkillSpec | dict[str, Any]) -> str | None:
+    text = _skill_text(skill)
+    if "proteomics" in text or "protein" in text or "蛋白组" in text or "蛋白" in text:
+        return "proteomics"
+    if "transcriptomics" in text or "rna-seq" in text or "counts" in text or "转录组" in text:
+        return "transcriptomics"
+    return None
+
+
+def _skill_contract_payload(skill: SkillSpec) -> dict[str, Any]:
+    return {
+        "name": skill.name,
+        "description": skill.description,
+        "trigger": skill.trigger,
+        "execution_mode": skill.execution_mode,
+        "data_paths": skill.data_paths,
+        "input_schema": skill.input_schema,
+        "content": skill.content[:16000],
+    }
+
+
+def _sanitize_transform_plan(
+    value: Any,
+    item: UploadedFileSummary,
+    skill: SkillSpec,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return _deterministic_transform_plan(item, skill)
+    plan = {
+        "selected_file_id": str(value.get("selected_file_id") or item.file_id),
+        "target_adapter": str(value.get("target_adapter") or _target_adapter_from_skill(skill)),
+        "target_data_family": str(
+            value.get("target_data_family") or _target_family_from_skill(skill) or ""
+        ),
+        "confidence": "high" if value.get("confidence") == "high" else "low",
+        "feature_id_column": str(value.get("feature_id_column") or ""),
+        "feature_name_column": str(value.get("feature_name_column") or ""),
+        "description_column": str(value.get("description_column") or ""),
+        "sample_columns": [str(item) for item in value.get("sample_columns") or []],
+        "sample_groups": _string_list_mapping(value.get("sample_groups")),
+        "missing_requirements": [str(item) for item in value.get("missing_requirements") or []],
+        "reason": str(value.get("reason") or ""),
+    }
+    if plan["selected_file_id"] != item.file_id:
+        plan["confidence"] = "low"
+        plan["missing_requirements"].append("selected_file_id does not match current file")
+    return plan
+
+
+def _deterministic_transform_plan(
+    item: UploadedFileSummary,
+    skill: SkillSpec | dict[str, Any],
+) -> dict[str, Any]:
+    target_family = _target_family_from_skill(skill)
+    target_adapter = _target_adapter_from_skill(skill)
+    if not item.path:
+        return {
+            "selected_file_id": item.file_id,
+            "target_adapter": target_adapter,
+            "target_data_family": target_family or "",
+            "confidence": "low",
+            "sample_columns": [],
+            "sample_groups": {},
+            "missing_requirements": ["missing file path"],
+            "reason": "上传文件缺少路径。",
+        }
+    try:
+        frame = read_preview_table(Path(item.path))
+        sample_columns = detect_numeric_sample_columns(frame)
+        if len(sample_columns) < 4:
+            sample_columns = detect_numeric_sample_columns(frame, min_numeric_ratio=0.2)
+        data_type = detect_data_type(frame)
+        detected_family = detect_data_family(frame, data_type)
+        groups = infer_sample_groups(sample_columns)
+        confidence, warnings = profile_confidence(detected_family, data_type, sample_columns, groups)
+        missing = warnings[:]
+        if detected_family != target_family:
+            missing.append(f"detected family {detected_family} does not match target {target_family}")
+        return {
+            "selected_file_id": item.file_id,
+            "target_adapter": target_adapter,
+            "target_data_family": target_family or "",
+            "confidence": "high" if confidence == "high" and detected_family == target_family else "low",
+            "feature_id_column": _first_matching_column(
+                frame,
+                _feature_id_candidates(target_family),
+            )
+            or "",
+            "feature_name_column": _first_matching_column(
+                frame,
+                _feature_name_candidates(target_family),
+            )
+            or "",
+            "description_column": _first_matching_column(
+                frame,
+                _description_candidates(target_family),
+            )
+            or "",
+            "sample_columns": sample_columns,
+            "sample_groups": groups,
+            "missing_requirements": missing,
+            "reason": "LLM 不可用时使用本地确定性 schema 检测生成转换计划。",
+        }
+    except Exception as exc:
+        return {
+            "selected_file_id": item.file_id,
+            "target_adapter": target_adapter,
+            "target_data_family": target_family or "",
+            "confidence": "low",
+            "sample_columns": [],
+            "sample_groups": {},
+            "missing_requirements": [str(exc)],
+            "reason": "文件转换计划生成失败。",
+        }
+
+
+def _feature_id_candidates(data_family: str | None) -> tuple[str, ...]:
+    if data_family == "proteomics":
+        return ("Protein.Names", "Protein.Group", "Protein.IDs", "protein", "Genes", "gene", "feature_id", "id")
+    if data_family == "transcriptomics":
+        return ("gene_id", "gene", "locus", "transcript", "feature_id", "id")
+    return ("feature_id", "id", "gene", "protein", "name")
+
+
+def _feature_name_candidates(data_family: str | None) -> tuple[str, ...]:
+    if data_family == "proteomics":
+        return ("Genes", "gene", "Protein.Names", "protein", "name")
+    if data_family == "transcriptomics":
+        return ("gene_short_name", "gene_name", "gene", "symbol", "name")
+    return ("name", "gene", "protein", "feature_id", "id")
+
+
+def _description_candidates(data_family: str | None) -> tuple[str, ...]:
+    if data_family == "proteomics":
+        return ("First.Protein.Description", "description", "annotation")
+    if data_family == "transcriptomics":
+        return ("description", "annotation", "biotype")
+    return ("description", "annotation")
+
+
+def _string_list_mapping(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, list[str]] = {}
+    for key, items in value.items():
+        if not isinstance(items, list):
+            continue
+        strings = [str(item) for item in items if str(item).strip()]
+        if strings:
+            cleaned[str(key)] = strings
+    return cleaned
 
 
 def _normalize_pdf_text(text: str) -> str:
@@ -520,7 +913,7 @@ def capabilities_for_profile(profile: dict[str, Any]) -> list[str]:
 def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
     if not attachments:
         return "当前会话没有上传文件。"
-    sections = ["当前会话已上传文件。以下是 intake 后的短摘要，不包含原始文件内容："]
+    sections = ["当前会话已上传文件。以下是 File Inspector 生成的通用文件上下文，不包含完整原始内容："]
     for item in attachments:
         intake = item.intake or {}
         if intake.get("data_type") == "pdf_document":
@@ -530,26 +923,25 @@ def uploaded_files_prompt(attachments: list[UploadedFileSummary]) -> str:
             sections.append(_uploaded_fasta_prompt(item, intake))
             continue
         groups = intake.get("sample_groups") or {}
-        group_text = ", ".join(f"{group}({len(samples)})" for group, samples in groups.items()) or "未识别"
-        columns = ", ".join(str(column) for column in (intake.get("columns_preview") or [])[:12]) or "未识别"
-        capabilities = ", ".join(intake.get("capabilities") or []) or "待确认"
+        possible_groups = intake.get("possible_sample_groups") or groups
+        group_text = ", ".join(f"{group}({len(samples)})" for group, samples in possible_groups.items()) or "未识别"
+        columns = ", ".join(str(column) for column in (intake.get("columns") or intake.get("columns_preview") or [])[:12]) or "未识别"
+        numeric_columns = ", ".join(str(column) for column in (intake.get("numeric_columns_preview") or [])[:12]) or "未识别"
         warnings = "；".join(str(warning) for warning in (intake.get("warnings") or [])) or "无"
-        standard_files = intake.get("standard_files") or {}
+        shape = intake.get("shape") or {}
         sections.append(
             "\n".join(
                 [
                     f"- 文件名：{item.filename}",
                     f"  文件位置：{item.path or 'unknown'}",
                     f"  文件大小：{item.size} bytes",
-                    f"  intake 状态：{intake.get('status', 'not_processed')}",
-                    f"  数据识别：{intake.get('data_family', 'unknown')}/{intake.get('data_type', 'unknown_table')}",
-                    f"  识别置信度：{intake.get('confidence', 'unconfirmed')}",
-                    f"  识别警告：{warnings}",
-                    f"  标准矩阵规模：features={intake.get('feature_count', 'unknown')}; samples={intake.get('sample_count', 'unknown')}",
-                    f"  原始结构预览：{columns}",
-                    f"  标准化结构：matrix={standard_files.get('matrix', 'not_ready')}; metadata={standard_files.get('sample_metadata', 'not_ready')}",
-                    f"  已识别分组：{group_text}",
-                    f"  可用于：{capabilities}",
+                    f"  文件上下文状态：{intake.get('status', 'not_processed')}",
+                    f"  文件形态：{intake.get('file_kind', 'unknown')}/{intake.get('format', 'unknown')}",
+                    f"  表格规模预览：rows={shape.get('rows_preview', intake.get('row_count_preview', 'unknown'))}; columns={shape.get('columns', intake.get('column_count', 'unknown'))}",
+                    f"  结构警告：{warnings}",
+                    f"  列名预览：{columns}",
+                    f"  数值列预览：{numeric_columns}",
+                    f"  可能分组：{group_text}",
                 ]
             )
         )
@@ -563,8 +955,8 @@ def _uploaded_pdf_prompt(item: UploadedFileSummary, intake: dict[str, Any]) -> s
                 f"- 文件名：{item.filename}",
                 f"  文件位置：{item.path or 'unknown'}",
                 f"  文件大小：{item.size} bytes",
-                f"  intake 状态：{intake.get('status', 'not_processed')}",
-                "  数据识别：literature/pdf_document",
+                f"  文件上下文状态：{intake.get('status', 'not_processed')}",
+                "  文件形态：pdf/pdf",
                 f"  解析结果：{intake.get('reason', 'PDF 文本解析失败')}",
             ]
         )
@@ -574,8 +966,8 @@ def _uploaded_pdf_prompt(item: UploadedFileSummary, intake: dict[str, Any]) -> s
             f"- 文件名：{item.filename}",
             f"  文件位置：{item.path or 'unknown'}",
             f"  文件大小：{item.size} bytes",
-            "  数据识别：literature/pdf_document",
-            f"  intake 状态：{intake.get('status', 'ready')}",
+            "  文件形态：pdf/pdf",
+            f"  文件上下文状态：{intake.get('status', 'ready')}",
             f"  标题：{intake.get('title') or 'unknown'}",
             f"  页数：{intake.get('parsed_pages', 'unknown')}/{intake.get('page_count', 'unknown')}",
             f"  提取文本长度：{intake.get('text_length', 'unknown')}",
@@ -598,17 +990,20 @@ def _uploaded_fasta_prompt(item: UploadedFileSummary, intake: dict[str, Any]) ->
             f"- 文件名：{item.filename}",
             f"  文件位置：{item.path or 'unknown'}",
             f"  文件大小：{item.size} bytes",
-            "  数据识别：sequence/fasta_sequences",
-            f"  intake 状态：{intake.get('status', 'not_processed')}",
+            "  文件形态：sequence/fasta",
+            f"  文件上下文状态：{intake.get('status', 'not_processed')}",
             f"  解析结果：{intake.get('reason', '')}",
             f"  序列数量：{intake.get('sequence_count', 0)}",
             f"  序列预览：{preview_text}",
-            "  可用于：blast_query",
         ]
     )
 
 
-def build_standard_matrix(frame: pd.DataFrame, sample_columns: list[str], data_family: str) -> pd.DataFrame:
+def build_standard_matrix(
+    frame: pd.DataFrame,
+    sample_columns: list[str],
+    data_family: str,
+) -> pd.DataFrame:
     family_candidates = {
         "proteomics": {
             "id": ("Protein.Names", "Protein.Group", "Protein.IDs", "protein", "Genes", "gene", "feature_id", "id"),
@@ -764,14 +1159,17 @@ def _standardize_expression_matrix(
     intake_dir: Path,
     data_family: str,
     strategy: dict[str, Any],
+    transform_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    sample_columns = detect_numeric_sample_columns(
-        frame,
-        min_numeric_ratio=float(strategy["min_numeric_ratio"]),
-    )
+    sample_columns = _planned_sample_columns(frame, transform_plan)
+    if not sample_columns:
+        sample_columns = detect_numeric_sample_columns(
+            frame,
+            min_numeric_ratio=float(strategy["min_numeric_ratio"]),
+        )
     if len(sample_columns) < 4:
         raise ValueError("可识别数值样本列少于 4 列")
-    groups = infer_sample_groups(sample_columns)
+    groups = _planned_sample_groups(sample_columns, transform_plan) or infer_sample_groups(sample_columns)
     if len(groups) < 2 or sum(len(samples) for samples in groups.values()) < 4:
         raise ValueError("未识别到至少两个可复用样本分组")
     matrix = build_standard_matrix(frame, sample_columns, data_family)
@@ -801,6 +1199,35 @@ def _standardize_expression_matrix(
             "sample_metadata": str(metadata_path),
         },
     }
+
+
+def _planned_sample_columns(frame: pd.DataFrame, transform_plan: dict[str, Any] | None) -> list[str]:
+    if not transform_plan:
+        return []
+    available = {str(column): str(column) for column in frame.columns}
+    columns: list[str] = []
+    for column in transform_plan.get("sample_columns") or []:
+        name = str(column)
+        if name in available and name not in columns:
+            values = _numeric_series(frame[available[name]])
+            if values.notna().sum() >= 2:
+                columns.append(available[name])
+    return columns
+
+
+def _planned_sample_groups(
+    sample_columns: list[str],
+    transform_plan: dict[str, Any] | None,
+) -> dict[str, list[str]]:
+    if not transform_plan:
+        return {}
+    available = set(sample_columns)
+    groups: dict[str, list[str]] = {}
+    for group, samples in _string_list_mapping(transform_plan.get("sample_groups")).items():
+        kept = [sample for sample in samples if sample in available]
+        if len(kept) >= 2:
+            groups[group] = kept
+    return groups
 
 
 def _failed_intake(item: UploadedFileSummary, reason: str) -> dict[str, Any]:
