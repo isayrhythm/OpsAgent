@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -112,6 +113,42 @@ COMMAND_TOOL_SPEC = SkillSpec(
 
 class CommandToolError(ValueError):
     pass
+
+
+_ALLOWED_READONLY_COMMANDS = {
+    "cat",
+    "dir",
+    "find",
+    "get-childitem",
+    "get-content",
+    "get-location",
+    "grep",
+    "head",
+    "ls",
+    "measure-object",
+    "pwd",
+    "rg",
+    "select-string",
+    "tail",
+    "wc",
+}
+_NO_ARG_COMMANDS = {"pwd", "get-location"}
+_PATH_READ_COMMANDS = {"cat", "get-content", "head", "tail", "wc", "measure-object"}
+_SEARCH_COMMANDS = {"grep", "rg", "select-string"}
+_LIST_COMMANDS = {"ls", "dir", "get-childitem"}
+_SENSITIVE_TOKENS = (
+    ".env",
+    "id_rsa",
+    "known_hosts",
+    "authorized_keys",
+    "/proc/self/environ",
+    "credential",
+    "secret",
+    "api_key",
+    "apikey",
+)
+_UNSAFE_FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-quit"}
+_SHELL_SYNTAX_PATTERN = re.compile(r"[\n\r;|`<>]|\$\(|\$\{|\b(and|or)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -245,31 +282,133 @@ def _validate_shell_command(command: str) -> None:
         raise CommandToolError("Shell command is empty")
     if len(text) > 2000:
         raise CommandToolError("Shell command is too long")
-    lowered = text.lower()
-    forbidden_literals = (
-        ".env",
-        "id_rsa",
-        "known_hosts",
-        "authorized_keys",
-        "/proc/self/environ",
-        "credential",
-        "secret",
-        "api_key",
-        "apikey",
-    )
-    if any(item in lowered for item in forbidden_literals):
+    if _SHELL_SYNTAX_PATTERN.search(text) or _has_single_ampersand(text):
+        raise CommandToolError("Shell command contains blocked shell syntax")
+    for segment in _split_command_chain(text):
+        _validate_command_segment(segment)
+
+
+def _split_command_chain(command: str) -> list[str]:
+    parts = [part.strip() for part in command.split("&&")]
+    if not parts or any(not part for part in parts):
+        raise CommandToolError("Shell command contains blocked shell syntax")
+    return parts
+
+
+def _has_single_ampersand(command: str) -> bool:
+    index = 0
+    while index < len(command):
+        if command[index] != "&":
+            index += 1
+            continue
+        if index + 1 < len(command) and command[index + 1] == "&":
+            index += 2
+            continue
+        return True
+    return False
+
+
+def _validate_command_segment(segment: str) -> None:
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except ValueError as exc:
+        raise CommandToolError("Shell command contains invalid quoting") from exc
+    if not tokens:
+        raise CommandToolError("Shell command is empty")
+
+    command_name = Path(tokens[0]).name.lower()
+    if command_name not in _ALLOWED_READONLY_COMMANDS:
+        raise CommandToolError(f"Shell command contains blocked command: {tokens[0]}")
+
+    args = tokens[1:]
+    if command_name in _NO_ARG_COMMANDS:
+        if args:
+            raise CommandToolError(f"Shell command arguments are not allowed for {tokens[0]}")
+        return
+    if command_name == "find":
+        _validate_find_args(args)
+        return
+    if command_name in _LIST_COMMANDS:
+        _validate_readonly_args(command_name, args, require_path=False)
+        return
+    if command_name in _PATH_READ_COMMANDS:
+        _validate_readonly_args(command_name, args, require_path=True)
+        return
+    if command_name in _SEARCH_COMMANDS:
+        _validate_readonly_args(command_name, args, require_path=False)
+        return
+    raise CommandToolError(f"Shell command contains blocked command: {tokens[0]}")
+
+
+def _validate_find_args(args: list[str]) -> None:
+    if not args:
+        raise CommandToolError("Shell command requires an explicit safe path for find")
+    for arg in args:
+        lowered = arg.lower()
+        if lowered in _UNSAFE_FIND_ACTIONS:
+            raise CommandToolError("Shell command contains blocked operation")
+        if lowered.startswith("-exec") or lowered.startswith("-delete"):
+            raise CommandToolError("Shell command contains blocked operation")
+        _validate_safe_token(arg)
+
+
+def _validate_readonly_args(command_name: str, args: list[str], *, require_path: bool) -> None:
+    saw_path = False
+    skip_next_numeric = False
+    for arg in args:
+        lowered = arg.lower()
+        if skip_next_numeric:
+            if not lowered.isdigit():
+                raise CommandToolError(f"Shell command contains invalid numeric argument for {command_name}")
+            skip_next_numeric = False
+            continue
+        if lowered in {"-n", "--lines", "-c", "--bytes", "-m", "--max-count"}:
+            skip_next_numeric = True
+            continue
+        if _is_option(arg):
+            _validate_safe_option(command_name, arg)
+            continue
+        saw_path = True
+        _validate_safe_token(arg)
+    if skip_next_numeric:
+        raise CommandToolError(f"Shell command contains incomplete numeric option for {command_name}")
+    if require_path and not saw_path:
+        raise CommandToolError(f"Shell command requires a safe relative path for {command_name}")
+
+
+def _validate_safe_option(command_name: str, option: str) -> None:
+    lowered = option.lower()
+    if lowered in {"--help", "-h", "/?"}:
+        return
+    if command_name in _LIST_COMMANDS and lowered in {"-r", "--recursive", "-recurse"}:
+        raise CommandToolError("Shell command contains blocked recursive listing")
+    if lowered.startswith("--") and not re.fullmatch(r"--[a-z0-9][a-z0-9-]*(=[A-Za-z0-9_.,:/@%+=-]+)?", lowered):
+        raise CommandToolError("Shell command contains blocked option syntax")
+    if option.startswith("-") and not re.fullmatch(r"-[A-Za-z0-9]+", option):
+        raise CommandToolError("Shell command contains blocked option syntax")
+
+
+def _validate_safe_token(token: str) -> None:
+    lowered = token.lower()
+    if any(item in lowered for item in _SENSITIVE_TOKENS):
         raise CommandToolError("Shell command attempts to access sensitive data")
-    forbidden_patterns = (
-        r"(^|[\s;&|])(sudo|su|ssh|scp|sftp|telnet|ftp|nc|netcat)([\s;&|]|$)",
-        r"(^|[\s;&|])(curl|wget)([\s;&|]|$)",
-        r"(^|[\s;&|])(apt|apt-get|yum|dnf|pacman|pip\s+install|npm\s+install)([\s;&|]|$)",
-        r"(^|[\s;&|])(rm\s+-[^\n;|&]*[rf]|rmdir|del|erase|format|mkfs|shutdown|reboot|poweroff)([\s;&|]|$)",
-        r"(^|[\s;&|])(dd\s+if=|killall|pkill|chmod\s+-r|chown\s+-r)([\s;&|]|$)",
-        r":\s*\(\)\s*\{",
+    if _is_path_escape(token):
+        raise CommandToolError("Shell command path must stay inside the command working directory")
+    if re.search(r"[\x00\n\r;&|`<>]", token) or "$(" in token or "${" in token:
+        raise CommandToolError("Shell command contains blocked shell syntax")
+
+
+def _is_option(token: str) -> bool:
+    return token.startswith("-") or token.startswith("/")
+
+
+def _is_path_escape(token: str) -> bool:
+    return (
+        token.startswith(("~", "/", "\\"))
+        or re.match(r"^[A-Za-z]:[\\/]", token) is not None
+        or ".." in Path(token).parts
+        or ".." in token.replace("\\", "/").split("/")
     )
-    for pattern in forbidden_patterns:
-        if re.search(pattern, lowered):
-            raise CommandToolError("Shell command contains a blocked operation")
 
 
 def _resolve_backend(backend: str) -> str:

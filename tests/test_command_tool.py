@@ -44,6 +44,28 @@ def test_command_tool_blocks_destructive_command() -> None:
         asyncio.run(execute_shell_command("rm -rf /tmp/example", backend="native"))
 
 
+def test_command_tool_allows_readonly_command_chain() -> None:
+    result = asyncio.run(execute_shell_command("pwd && ls -la", backend="native"))
+
+    assert result["status"] == "completed"
+    assert "OpsAgent" in result["stdout"]
+
+
+def test_command_tool_blocks_command_substitution() -> None:
+    with pytest.raises(CommandToolError, match="blocked shell syntax"):
+        asyncio.run(execute_shell_command("ls $(pwd)", backend="native"))
+
+
+def test_command_tool_blocks_paths_outside_workdir() -> None:
+    with pytest.raises(CommandToolError, match="working directory"):
+        asyncio.run(execute_shell_command("cat ../pyproject.toml", backend="native"))
+
+
+def test_command_tool_blocks_unapproved_interpreters() -> None:
+    with pytest.raises(CommandToolError, match="blocked command"):
+        asyncio.run(execute_shell_command("python -c 'print(1)'", backend="native"))
+
+
 def test_command_planner_does_not_fallback_without_llm() -> None:
     with pytest.raises(RuntimeError, match="command planner model is unavailable"):
         asyncio.run(plan_shell_command({"question": "看看当前目录"}, "", [], OfflineLLM()))
