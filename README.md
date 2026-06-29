@@ -1,5 +1,7 @@
 # OpsAgent
 
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue) ![LangGraph](https://img.shields.io/badge/LangGraph-brightgreen) ![FastAPI](https://img.shields.io/badge/FastAPI-brightgreen) ![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-purple) ![TypeScript](https://img.shields.io/badge/TypeScript-blue)
+
 OpsAgent 是一个 LangGraph + FastAPI + React + Skill contract 的最小可运行 Agent 骨架。它支持普通对话、动态 Skill 装载、确定性工具调用、Search Skill、多源网络搜索，以及用于复杂问题的 Deep Research DAG 编排。
 
 核心流程：
