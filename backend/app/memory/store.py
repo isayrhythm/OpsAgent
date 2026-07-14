@@ -108,6 +108,32 @@ class MemoryStore:
         )
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def append_assistant_message(
+        self,
+        user_id: str,
+        session_id: str,
+        answer: str,
+        *,
+        run_id: str | None = None,
+    ) -> None:
+        self.ensure_user_dirs(user_id)
+        path = self.paths.conversation_path(user_id, session_id)
+        if path.exists():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        else:
+            payload = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "created_at": _now(),
+                "messages": [],
+            }
+        message = {"role": "assistant", "content": answer, "created_at": _now()}
+        if run_id:
+            message["run_id"] = run_id
+        payload["updated_at"] = _now()
+        payload.setdefault("messages", []).append(message)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def save_upload(
         self,
         user_id: str,

@@ -22,6 +22,7 @@ def make_route_node(llm: DeepSeekClient, deps: Any):
             history=state.get("history", []),
             data_profiles=state.get("data_profiles", []),
             detached_files=state.get("detached_files", []),
+            active_runs=state.get("active_runs", []),
         )
         selected_skills = selection.get("skills") or []
         if any(getattr(skill, "name", "") == deps.COMMAND_TOOL_NAME for skill in selected_skills):

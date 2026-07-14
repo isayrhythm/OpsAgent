@@ -15,6 +15,18 @@ def llm_history_messages(state: AgentState) -> list[dict[str, str]]:
     return messages
 
 
+def background_runs_prompt(state: AgentState) -> str:
+    runs = state.get("active_runs", [])
+    if not runs:
+        return ""
+    return "\n".join(
+        [
+            "当前会话后台任务如下。任务状态和进展只能以这段结构化上下文为准；用户询问进度时直接依据它回答，不要重新启动同一分析。",
+            json.dumps(runs, ensure_ascii=False),
+        ]
+    )
+
+
 def attachment_context(state: AgentState) -> list[dict[str, Any]]:
     return [
         {

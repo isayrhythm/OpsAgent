@@ -31,9 +31,9 @@ from backend.app.tools.web_search import (
 from backend.app.tools.web_search_planner import normalize_web_search_mode, plan_web_search
 
 
-def build_agent_graph(llm: DeepSeekClient, emit: Emit):
+def build_agent_graph(llm: DeepSeekClient, emit: Emit, run_manager: Any | None = None):
     graph = StateGraph(AgentState)
-    deps = _deps()
+    deps = _deps(run_manager)
 
     graph.add_node("intake_uploads", make_intake_uploads_node(llm, emit, deps))
     graph.add_node("load_skills", make_load_skill_node(emit, deps))
@@ -73,7 +73,7 @@ def _next_node_after_route(state: AgentState) -> str:
     return "final_answer"
 
 
-def _deps() -> SimpleNamespace:
+def _deps(run_manager: Any | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         COMMAND_TOOL_NAME=COMMAND_TOOL_NAME,
         ToolRetryPolicy=ToolRetryPolicy,
@@ -89,12 +89,14 @@ def _deps() -> SimpleNamespace:
         execute_skill=execute_skill,
         format_web_search_context=format_web_search_context,
         load_skill_registry=load_skill_registry,
+        llm_factory=DeepSeekClient,
         normalize_web_search_mode=normalize_web_search_mode,
         plan_shell_command=plan_shell_command,
         plan_web_search=plan_web_search,
         profile_uploaded_files=profile_uploaded_files,
         retry_skill=retry_skill,
         route_registered_skills=route_registered_skills,
+        run_manager=run_manager,
         run_tool=run_tool,
         search_web_queries=search_web_queries,
         should_route_deep_research=should_route_deep_research,

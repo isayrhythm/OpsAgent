@@ -1286,6 +1286,91 @@ button {
   padding: 0 0 18px;
 }
 
+.background-run-dock {
+  display: flex;
+  width: min(920px, calc(100% - 36px));
+  margin: 0 auto 8px;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.background-run-item {
+  display: grid;
+  flex: 0 1 360px;
+  min-width: min(320px, calc(100vw - 36px));
+  grid-template-columns: 10px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(31, 93, 80, 0.2);
+  border-radius: 8px;
+  background: rgba(238, 246, 241, 0.94);
+  padding: 8px 10px;
+}
+
+.background-run-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(31, 93, 80, 0.12);
+  animation: background-run-pulse 1.4s ease-in-out infinite;
+}
+
+.background-run-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.background-run-copy strong,
+.background-run-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-run-copy strong {
+  font-size: 13px;
+}
+
+.background-run-copy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.background-run-cancel {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px;
+}
+
+.background-run-cancel:hover {
+  background: rgba(155, 57, 47, 0.1);
+  color: var(--danger);
+}
+
+.background-run-cancel svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+@keyframes background-run-pulse {
+  50% {
+    opacity: 0.45;
+    transform: scale(0.78);
+  }
+}
+
 .upload-status {
   width: fit-content;
   max-width: 100%;

@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.app.config import TASK_RETENTION_SECONDS
 from backend.app.memory.store import MemoryStore
+from backend.app.runs.manager import RunManager
 from backend.app.schemas import ChatHistoryMessage, DetachedFileSummary, UploadedFileSummary
 from backend.app.schemas import TaskEvent
 from backend.app.agents.agent_graph import build_agent_graph
@@ -33,9 +34,16 @@ class TaskState:
 
 
 class TaskManager:
-    def __init__(self, retention_seconds: float = TASK_RETENTION_SECONDS) -> None:
+    def __init__(
+        self,
+        retention_seconds: float = TASK_RETENTION_SECONDS,
+        *,
+        memory: MemoryStore | None = None,
+        run_manager: RunManager | None = None,
+    ) -> None:
         self._tasks: dict[str, TaskState] = {}
-        self._memory = MemoryStore()
+        self._memory = memory or MemoryStore()
+        self._run_manager = run_manager
         self._retention_seconds = retention_seconds
 
     def create_task(
@@ -105,15 +113,26 @@ class TaskManager:
                 self._memory.ensure_user_dirs(state.user_id)
                 if not state.history:
                     state.history = self._memory.load_history(state.user_id, state.session_id)
-            graph = build_agent_graph(llm, lambda event_type, step, status, data=None: self._emit(
-                state,
-                event_type,
-                step,
-                status,
-                data,
-            ))
+            graph = build_agent_graph(
+                llm,
+                lambda event_type, step, status, data=None: self._emit(
+                    state,
+                    event_type,
+                    step,
+                    status,
+                    data,
+                ),
+                self._run_manager,
+            )
+            active_runs = (
+                self._run_manager.prompt_context(state.user_id, state.session_id)
+                if self._run_manager is not None
+                else []
+            )
             result = await graph.ainvoke(
                 {
+                    "user_id": state.user_id,
+                    "session_id": state.session_id,
                     "message": state.message,
                     "history": state.history,
                     "attachments": state.attachments,
@@ -123,6 +142,7 @@ class TaskManager:
                         "mode": state.web_search_mode,
                         "providers": state.web_search_providers,
                     },
+                    "active_runs": active_runs,
                 }
             )
             answer = result.get("answer") or ""
@@ -164,6 +184,7 @@ class TaskManager:
                     "web_search_plan": search_result.get("plan"),
                     "search": search_result,
                     "research": research_result,
+                    "background_runs": result.get("background_runs_created") or [],
                     "usage": llm.usage_snapshot(),
                 },
             )

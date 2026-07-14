@@ -10,6 +10,8 @@ Emit = Callable[[str, int, str, Any | None], Awaitable[None]]
 
 
 class AgentState(TypedDict, total=False):
+    user_id: str
+    session_id: str | None
     message: str
     history: list[ChatHistoryMessage]
     attachments: list[UploadedFileSummary]
@@ -25,4 +27,6 @@ class AgentState(TypedDict, total=False):
     route_mode: str
     research: dict[str, Any]
     search: dict[str, Any]
+    active_runs: list[dict[str, Any]]
+    background_runs_created: list[dict[str, Any]]
     answer: str

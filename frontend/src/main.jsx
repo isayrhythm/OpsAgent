@@ -27,6 +27,7 @@ const SEARCH_PROVIDERS = [];
 const DEFAULT_WEB_SEARCH_PROVIDERS = ["tavily", "quark"];
 const SEARCH_MODES = [{id: "force", label: "网络搜索"}];
 const DEFAULT_WEB_SEARCH_MODE = "auto";
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 const ALLOWED_MARKDOWN_TAGS = new Set([
   "a",
@@ -93,6 +94,23 @@ function normalizeWebSearchMode(value, legacyEnabled = false) {
   return mode === "force" || legacyEnabled ? "force" : DEFAULT_WEB_SEARCH_MODE;
 }
 
+function normalizeBackgroundRun(run) {
+  const runId = String(run?.run_id || run?.runId || "");
+  return {
+    runId,
+    runType: String(run?.run_type || run?.runType || "background"),
+    agent: String(run?.agent || "Background Agent"),
+    title: String(run?.title || run?.agent || "后台任务"),
+    status: String(run?.status || "queued"),
+    statusText: String(run?.status_text || run?.statusText || "Queued"),
+    progressStep: Number(run?.progress_step ?? run?.progressStep ?? 0),
+    progressData: run?.progress_data ?? run?.progressData ?? null,
+    eventsUrl: String(run?.events_url || run?.eventsUrl || (runId ? `/api/runs/${runId}/events` : "")),
+    createdAt: String(run?.created_at || run?.createdAt || new Date().toISOString()),
+    updatedAt: String(run?.updated_at || run?.updatedAt || new Date().toISOString()),
+  };
+}
+
 function normalizeSession(session) {
   const webSearchProviders = normalizeWebSearchProviders(session.webSearchProviders, Boolean(session.webSearchEnabled));
   const webSearchMode = normalizeWebSearchMode(session.webSearchMode, Boolean(session.webSearchEnabled));
@@ -114,6 +132,7 @@ function normalizeSession(session) {
           const disconnected = Boolean(message.streaming && !resumable && !message.content);
           return {
             id: message.id || crypto.randomUUID(),
+            runId: message.runId || null,
             role: message.role === "assistant" ? "agent" : message.role,
             content: String(message.content || ""),
             contextContent: String(message.contextContent || message.content || ""),
@@ -131,6 +150,9 @@ function normalizeSession(session) {
       : [],
     attachments: Array.isArray(session.attachments) ? session.attachments : [],
     detachedFiles: Array.isArray(session.detachedFiles) ? session.detachedFiles : [],
+    backgroundRuns: Array.isArray(session.backgroundRuns)
+      ? session.backgroundRuns.map(normalizeBackgroundRun).filter((run) => run.runId)
+      : [],
   };
 }
 
@@ -170,6 +192,7 @@ function newSession(title = "新对话", webSearchMode = DEFAULT_WEB_SEARCH_MODE
     messages: [],
     attachments: [],
     detachedFiles: [],
+    backgroundRuns: [],
   };
 }
 
@@ -586,6 +609,7 @@ function App() {
   const uploadClearTimerRef = React.useRef(null);
   const sourceCacheRef = React.useRef(new Map());
   const taskSourcesRef = React.useRef(new Map());
+  const runSourcesRef = React.useRef(new Map());
   const uiDeltaQueuesRef = React.useRef(new Map());
   const uiDeltaTimersRef = React.useRef(new Map());
 
@@ -603,6 +627,9 @@ function App() {
   const activeTaskMessage = [...(activeSession?.messages || [])]
     .reverse()
     .find((message) => message.role === "agent" && message.streaming && message.taskId && message.eventsUrl);
+  const activeBackgroundRuns = (activeSession?.backgroundRuns || []).filter(
+    (run) => !TERMINAL_RUN_STATUSES.has(run.status),
+  );
 
   React.useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 30)));
@@ -635,7 +662,11 @@ function App() {
       for (const source of taskSourcesRef.current.values()) {
         source.close();
       }
+      for (const source of runSourcesRef.current.values()) {
+        source.close();
+      }
       taskSourcesRef.current.clear();
+      runSourcesRef.current.clear();
       uiDeltaTimersRef.current.clear();
       uiDeltaQueuesRef.current.clear();
     },
@@ -668,6 +699,22 @@ function App() {
           usage: normalizeUsage({...messageItem.usage, internal: 0, output: 0}),
         }));
         listenToTask(message.eventsUrl, session.id, message.id);
+      }
+    }
+  }, [sessions, apiBase]);
+
+  React.useEffect(() => {
+    for (const session of sessions) {
+      for (const run of session.backgroundRuns || []) {
+        if (
+          !run.runId ||
+          !run.eventsUrl ||
+          TERMINAL_RUN_STATUSES.has(run.status) ||
+          runSourcesRef.current.has(run.runId)
+        ) {
+          continue;
+        }
+        listenToBackgroundRun(run.eventsUrl, session.id, run.runId);
       }
     }
   }, [sessions, apiBase]);
@@ -707,6 +754,55 @@ function App() {
         }),
       ),
     );
+  }
+
+  function upsertBackgroundRuns(sessionId, values) {
+    const incoming = (values || []).map(normalizeBackgroundRun).filter((run) => run.runId);
+    if (!incoming.length) {
+      return;
+    }
+    patchSession(sessionId, (session) => {
+      const byId = new Map((session.backgroundRuns || []).map((run) => [run.runId, run]));
+      for (const run of incoming) {
+        byId.set(run.runId, {...byId.get(run.runId), ...run});
+      }
+      return {...session, backgroundRuns: [...byId.values()]};
+    });
+  }
+
+  function updateBackgroundRun(sessionId, runId, updater) {
+    patchSession(sessionId, (session) => ({
+      ...session,
+      backgroundRuns: (session.backgroundRuns || []).map((run) => (run.runId === runId ? updater(run) : run)),
+    }));
+  }
+
+  function appendBackgroundRunMessage(sessionId, runId, answer, status) {
+    const content = String(answer || "").trim();
+    if (!content) {
+      return;
+    }
+    patchSession(sessionId, (session) => {
+      if ((session.messages || []).some((message) => message.runId === runId)) {
+        return session;
+      }
+      return {
+        ...session,
+        messages: [
+          ...(session.messages || []),
+          {
+            id: crypto.randomUUID(),
+            role: "agent",
+            runId,
+            content,
+            contextContent: content,
+            createdAt: Date.now(),
+            status: status || null,
+            streaming: false,
+          },
+        ],
+      };
+    });
   }
 
   function setUploadForSession(sessionId, status, running) {
@@ -1132,6 +1228,7 @@ function App() {
     source.addEventListener("result", (event) => {
       const payload = JSON.parse(event.data);
       const answer = payload.data?.answer || JSON.stringify(payload.data || {}, null, 2);
+      upsertBackgroundRuns(sessionId, payload.data?.background_runs || []);
       if (payload.data?.web_sources) {
         sourceCacheRef.current.set(messageId, payload.data.web_sources);
       }
@@ -1199,6 +1296,73 @@ function App() {
     });
   }
 
+  function listenToBackgroundRun(eventsUrl, sessionId, runId) {
+    if (runSourcesRef.current.has(runId)) {
+      return;
+    }
+    const source = new EventSource(`${normalizedApiBase()}${eventsUrl}`);
+    runSourcesRef.current.set(runId, source);
+
+    source.addEventListener("progress", (event) => {
+      const payload = JSON.parse(event.data);
+      const incoming = normalizeBackgroundRun(payload.data?.run || {run_id: runId});
+      updateBackgroundRun(sessionId, runId, (run) => ({
+        ...run,
+        ...incoming,
+        status: incoming.status || "running",
+        statusText: payload.status || incoming.statusText,
+        progressStep: Number(payload.step ?? incoming.progressStep ?? run.progressStep),
+        progressData: payload.data || incoming.progressData,
+      }));
+    });
+
+    source.addEventListener("result", (event) => {
+      const payload = JSON.parse(event.data);
+      const incoming = normalizeBackgroundRun(payload.data?.run || {run_id: runId, status: "completed"});
+      updateBackgroundRun(sessionId, runId, (run) => ({
+        ...run,
+        ...incoming,
+        status: incoming.status || payload.data?.run_status || "completed",
+        statusText: payload.status || incoming.statusText,
+        progressStep: 100,
+      }));
+      appendBackgroundRunMessage(sessionId, runId, payload.data?.answer, null);
+    });
+
+    source.addEventListener("cancelled", (event) => {
+      const payload = JSON.parse(event.data);
+      updateBackgroundRun(sessionId, runId, (run) => ({
+        ...run,
+        status: "cancelled",
+        statusText: payload.status || "Cancelled",
+      }));
+      appendBackgroundRunMessage(sessionId, runId, "后台任务已取消。", null);
+    });
+
+    source.addEventListener("error", (event) => {
+      if (!event.data) {
+        return;
+      }
+      const payload = JSON.parse(event.data);
+      updateBackgroundRun(sessionId, runId, (run) => ({
+        ...run,
+        status: "failed",
+        statusText: payload.status || "Failed",
+      }));
+      appendBackgroundRunMessage(
+        sessionId,
+        runId,
+        payload.data?.answer || `后台任务失败：${payload.data?.error || payload.status || "unknown error"}`,
+        null,
+      );
+    });
+
+    source.addEventListener("end", () => {
+      runSourcesRef.current.delete(runId);
+      source.close();
+    });
+  }
+
   async function cancelTask() {
     if (!activeSession || !activeTaskMessage?.taskId) {
       return;
@@ -1217,6 +1381,25 @@ function App() {
         ...messageItem,
         status: `停止失败：${error.message}`,
       }));
+    }
+  }
+
+  async function cancelBackgroundRun(runId) {
+    if (!runId) {
+      return;
+    }
+    try {
+      const response = await fetch(`${normalizedApiBase()}/api/runs/${runId}/cancel`, {method: "POST"});
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+    } catch (error) {
+      if (activeSession) {
+        updateBackgroundRun(activeSession.id, runId, (run) => ({
+          ...run,
+          statusText: `取消失败：${error.message}`,
+        }));
+      }
     }
   }
 
@@ -1253,6 +1436,9 @@ function App() {
             <MessageList messages={activeSession.messages} apiBase={normalizedApiBase()} />
           )}
         </section>
+        {activeBackgroundRuns.length ? (
+          <BackgroundRunDock runs={activeBackgroundRuns} onCancel={cancelBackgroundRun} />
+        ) : null}
         <Composer
           value={input}
           onChange={setInput}
@@ -1444,6 +1630,31 @@ function Topbar({connection, onMenu, activeTitle}) {
         <span className={connection.ok ? "ok" : "bad"}>{connection.label}</span>
       </div>
     </header>
+  );
+}
+
+function BackgroundRunDock({runs, onCancel}) {
+  return (
+    <section className="background-run-dock" aria-live="polite">
+      {runs.map((run) => (
+        <div className="background-run-item" key={run.runId}>
+          <span className="background-run-indicator" aria-hidden="true" />
+          <div className="background-run-copy">
+            <strong>{run.title}</strong>
+            <span>{run.statusText || run.status}</span>
+          </div>
+          <button
+            className="background-run-cancel"
+            type="button"
+            onClick={() => onCancel(run.runId)}
+            aria-label={`取消 ${run.title}`}
+            title="取消后台任务"
+          >
+            <StopIcon />
+          </button>
+        </div>
+      ))}
+    </section>
   );
 }
 

@@ -26,6 +26,7 @@ async def route_registered_skills(
     history: list[ChatHistoryMessage] | None = None,
     data_profiles: list[dict[str, Any]] | None = None,
     detached_files: list[DetachedFileSummary] | None = None,
+    active_runs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     decision = await route_skill(
         message,
@@ -34,6 +35,7 @@ async def route_registered_skills(
         history or [],
         data_profiles or [],
         detached_files or [],
+        active_runs or [],
     )
     selected_skills = decision.skills
     if not selected_skills:

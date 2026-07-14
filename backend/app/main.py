@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.config import CORS_ORIGINS
 from backend.app.memory.store import MemoryStore
+from backend.app.runs.manager import RunManager
 from backend.app.schemas import ChatRequest, ChatResponse, SkillSummary, UploadResponse
 from backend.app.skill_tools.differential_protein import DifferentialProteinError, artifact_path
 from backend.app.services.skill_loader import load_skills
@@ -24,9 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-tasks = TaskManager()
-upload_intakes = UploadIntakeManager()
 memory = MemoryStore()
+runs = RunManager(memory=memory)
+tasks = TaskManager(memory=memory, run_manager=runs)
+upload_intakes = UploadIntakeManager()
 
 
 @app.get("/api/health")
@@ -119,6 +121,56 @@ async def cancel_task(task_id: str) -> dict[str, str | bool]:
     if state is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"task_id": task_id, "cancelled": tasks.cancel(task_id)}
+
+
+@app.get("/api/runs")
+async def background_runs(user_id: str = "default", session_id: str | None = None) -> list[dict[str, object]]:
+    return [state.summary() for state in runs.list_for_session(user_id, session_id)]
+
+
+@app.get("/api/runs/{run_id}")
+async def background_run(run_id: str) -> dict[str, object]:
+    state = runs.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Background run not found")
+    return state.summary(include_result=True)
+
+
+@app.get("/api/runs/{run_id}/events")
+async def background_run_events(run_id: str, last_event_id: str | None = Header(default=None)) -> StreamingResponse:
+    state = runs.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Background run not found")
+
+    async def stream():
+        cursor = _event_cursor(last_event_id)
+        while True:
+            while cursor < len(state.events):
+                event = state.events[cursor]
+                cursor += 1
+                yield f"id: {cursor}\nevent: {event.type}\ndata: {event.model_dump_json()}\n\n"
+            if state.done:
+                yield "event: end\ndata: {}\n\n"
+                break
+            async with state.condition:
+                if cursor < len(state.events) or state.done:
+                    continue
+                try:
+                    await asyncio.wait_for(state.condition.wait(), timeout=15)
+                except asyncio.TimeoutError:
+                    pass
+            if cursor >= len(state.events) and not state.done:
+                yield "event: ping\ndata: {}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/runs/{run_id}/cancel")
+async def cancel_background_run(run_id: str) -> dict[str, str | bool]:
+    state = runs.get(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Background run not found")
+    return {"run_id": run_id, "cancelled": runs.cancel(run_id)}
 
 
 @app.get("/api/uploads/{task_id}/events")

@@ -178,3 +178,25 @@ def test_router_compacts_long_biological_sequences_before_llm_routing() -> None:
 
     assert sequence not in compacted
     assert "[sequence omitted: 120 residues]" in compacted
+
+
+def test_router_includes_background_run_context() -> None:
+    skill = make_skill("differential_protein_analysis", "differential protein analysis")
+    llm = FakeRouterLLM('{"skill_names":[],"reason":"report current run"}')
+    active_runs = [
+        {
+            "run_id": "run-a",
+            "title": "差异蛋白组分析",
+            "status": "running",
+            "status_text": "checking outputs",
+        }
+    ]
+
+    decision = asyncio.run(route_skill("跑到哪了？", [skill], llm, active_runs=active_runs))
+
+    assert decision.skills == []
+    request_messages = llm.calls[0][0][0]
+    payload = request_messages[1]["content"]
+    assert "background_runs" in payload
+    assert "run-a" in payload
+    assert "checking outputs" in payload

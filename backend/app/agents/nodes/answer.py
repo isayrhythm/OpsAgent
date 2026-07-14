@@ -5,6 +5,7 @@ from typing import Any
 
 from backend.app.agents.formatters import (
     attachment_context,
+    background_runs_prompt,
     detached_files_prompt,
     format_command_answer,
     llm_history_messages,
@@ -64,6 +65,23 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
         skill_outputs = state.get("skill_outputs", [])
         skill_output = state.get("skill_output")
         command_outputs = state.get("command_outputs", [])
+        background_runs_created = state.get("background_runs_created", [])
+        if background_runs_created:
+            titles = "、".join(str(item.get("title") or item.get("agent") or "后台任务") for item in background_runs_created)
+            answer = (
+                f"已启动后台任务：{titles}。任务会继续运行，你现在可以继续聊天；"
+                "完成后结果会自动回到当前对话。"
+            )
+            await emit("answer_delta", 7, "Background Run Started", {"delta": answer})
+            search_state = state.get("search") if isinstance(state.get("search"), dict) else {}
+            search_task = search_state.get("task")
+            if search_task and not search_task.done():
+                search_task.cancel()
+            return {
+                "answer": answer,
+                "background_runs_created": background_runs_created,
+                "search": public_search_state(state),
+            }
         if skill_output is None and not skill_outputs and not command_outputs:
             if not llm.available:
                 answer = "当前未配置 DEEPSEEK_API_KEY，无法进行普通对话。"
@@ -101,6 +119,7 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                                     "skill_output": None,
                                     "skill_outputs": [],
                                     "command_outputs": [],
+                                    "background_runs": state.get("active_runs", []),
                                 },
                                 ensure_ascii=False,
                             ),
@@ -115,6 +134,7 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                             "content": deps.uploaded_files_prompt(state.get("attachments", []))
                             + ("\n" + detached_prompt if detached_prompt else "")
                             + ("\n" + web_context if web_context else "")
+                            + ("\n" + background_runs_prompt(state) if state.get("active_runs") else "")
                             + "\n路由判断："
                             + state.get("route_reason", ""),
                         },
@@ -191,6 +211,7 @@ def make_answer_node(llm: DeepSeekClient, emit: Emit, deps: Any):
                                 for item in skill_outputs
                             ],
                             "command_outputs": deps.compact_value(command_outputs),
+                            "background_runs": state.get("active_runs", []),
                         },
                         ensure_ascii=False,
                     ),

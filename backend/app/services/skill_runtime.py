@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from backend.app.agents.omics_analysis import run_omics_analysis_graph
 from backend.app.schemas import ChatHistoryMessage, UploadedFileSummary
 from backend.app.skill_tools.blast_query import classify_blast_query, run_blast_query
 from backend.app.llm.deepseek import DeepSeekClient
@@ -189,46 +190,28 @@ async def _run_differential_protein(
     invocation: SkillInvocation,
     context: SkillExecutionContext,
 ) -> dict[str, Any]:
-    rejected = _reject_mismatched_matrix(
-        context.data_profiles,
-        "proteomics",
-        "上传文件尚未被高置信识别为可分析的蛋白组表达矩阵，不能调用蛋白差异分析。",
+    return await run_omics_analysis_graph(
+        data_family="proteomics",
+        attachments=context.attachments,
+        arguments=invocation.arguments,
+        data_profiles=context.data_profiles,
+        runner=run_differential_protein_analysis,
+        emit=context.emit,
     )
-    if rejected is not None:
-        return rejected
-    return await asyncio.to_thread(run_differential_protein_analysis, context.attachments, invocation.arguments)
 
 
 async def _run_differential_transcriptomics(
     invocation: SkillInvocation,
     context: SkillExecutionContext,
 ) -> dict[str, Any]:
-    rejected = _reject_mismatched_matrix(
-        context.data_profiles,
-        "transcriptomics",
-        "上传文件尚未被高置信识别为可分析的转录组 counts 表达矩阵，不能调用转录组差异分析。",
+    return await run_omics_analysis_graph(
+        data_family="transcriptomics",
+        attachments=context.attachments,
+        arguments=invocation.arguments,
+        data_profiles=context.data_profiles,
+        runner=run_differential_transcriptomics_analysis,
+        emit=context.emit,
     )
-    if rejected is not None:
-        return rejected
-    return await asyncio.to_thread(run_differential_transcriptomics_analysis, context.attachments, invocation.arguments)
-
-
-def _reject_mismatched_matrix(
-    data_profiles: list[dict[str, Any]],
-    data_family: str,
-    error: str,
-) -> dict[str, Any] | None:
-    ready = any(
-        profile.get("status") == "ready"
-        and profile.get("analysis_ready") is True
-        and profile.get("confidence") == "high"
-        and profile.get("data_family") == data_family
-        and profile.get("data_type") == "expression_matrix"
-        for profile in data_profiles
-    )
-    if data_profiles and not ready:
-        return {"error": error, "data_profiles": data_profiles}
-    return None
 
 
 def _validate_contract(value: Any, schema: dict[str, Any] | None, label: str) -> None:

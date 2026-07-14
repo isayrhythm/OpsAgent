@@ -75,6 +75,7 @@ async def route_skill(
     history: list[ChatHistoryMessage] | None = None,
     data_profiles: list[dict[str, object]] | None = None,
     detached_files: list[DetachedFileSummary] | None = None,
+    active_runs: list[dict[str, object]] | None = None,
 ) -> RouteDecision:
     history = history or []
     if not skills:
@@ -100,7 +101,9 @@ async def route_skill(
             [
                 {
                     "role": "system",
-                    "content": ROUTER_SYSTEM_PROMPT,
+                    "content": ROUTER_SYSTEM_PROMPT
+                    + " If background_runs contains a current task and the user is asking about its status, progress, "
+                    "or result, return an empty skill_names list. Do not start the same analysis again.",
                 },
                 {
                     "role": "user",
@@ -117,6 +120,7 @@ async def route_skill(
                                 {"file_id": item.file_id, "filename": item.filename}
                                 for item in (detached_files or [])
                             ],
+                            "background_runs": active_runs or [],
                             "skills": catalog,
                             "output_schema": {
                                 "skill_names": ["string"],

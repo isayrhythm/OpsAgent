@@ -35,7 +35,12 @@ backend/app/agents/
   LangGraph 编排层
   - 主 Agent graph
   - Deep Research graph
+  - 转录组 / 蛋白组内部决策 graph
   - 路由、执行、最终回答、任务状态和工具轨迹
+
+backend/app/runs/
+  后台任务层
+  - BackgroundRun 状态、事件、取消、结果回填和 prompt 上下文
 
 backend/app/tools/
   内置工具层
@@ -72,6 +77,8 @@ intake_uploads
       -> research_graph
 ```
 
+两个组学 Skill 被选中后会创建独立的 `BackgroundRun`。主图立即返回任务已启动，内部子图继续执行输入判定、确定性分析和结果质控；RunManager 将进度注入后续对话，完成后把结果回填到当前会话。
+
 Deep Research 子图：
 
 ```text
@@ -95,6 +102,7 @@ classify_intent
 - 受限 Shell Command：只允许白名单内的只读命令，限制 shell 语法、路径越界、敏感文件访问和危险操作。
 - Artifact 输出：确定性分析可以生成可下载产物，并通过 API 暴露。
 - SSE 进度：后端推送思考、工具调用、文件读取、研究计划、来源、UI blocks 和最终结果。
+- 后台组学任务：转录组和蛋白组分析在独立 run 中继续执行，对话输入不会被长分析锁住；完成结果自动回到当前会话。
 - Tool trace：任务完成后保存本轮工具轨迹，便于前端展示和后续上下文引用。
 
 ## 配置
@@ -128,6 +136,7 @@ QUARK_SEARCH_CONTENT_TYPE=snippet
 OPSAGENT_EXECUTION_TIMEOUT_SECONDS=20
 OPSAGENT_LLM_STREAM_TIMEOUT_SECONDS=20
 OPSAGENT_TASK_RETENTION_SECONDS=120
+OPSAGENT_BACKGROUND_RUN_RETENTION_SECONDS=86400
 OPSAGENT_UPLOAD_INTAKE_RETENTION_SECONDS=120
 OPSAGENT_CORS_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 OPSAGENT_MEMORY_DIR=memory
@@ -180,6 +189,10 @@ http://127.0.0.1:8001/api/health
 - `POST /api/chat`：创建聊天任务，返回 `task_id` 和 SSE 地址。
 - `GET /api/tasks/{task_id}/events`：监听聊天任务进度、研究计划、步骤状态和最终结果。
 - `POST /api/tasks/{task_id}/cancel`：取消仍在运行的聊天任务。
+- `GET /api/runs?user_id=...&session_id=...`：列出当前会话的后台任务。
+- `GET /api/runs/{run_id}`：读取后台任务状态和结果。
+- `GET /api/runs/{run_id}/events`：通过 SSE 监听后台任务进度和完成结果。
+- `POST /api/runs/{run_id}/cancel`：取消后台任务。
 - `GET /api/artifacts/{run_id}/{filename}`：下载工具或 Skill 生成的 artifact。
 
 上传文件不会把完整文件内容直接塞进模型上下文。上传后先由 File Inspector 生成通用文件 profile；聊天请求携带附件元信息和 profile。只有当具体 Skill 被选中时，File Transformer 才会根据该 Skill 的 contract 把文件转换为执行器需要的结构。
@@ -260,6 +273,6 @@ npm --prefix frontend run build
 - 项目可扩展到任意领域，但领域能力取决于接入的 Skill、数据源、索引和 executor。
 - 当前 RAG 以文件上下文、Web Search、本地数据和 Skill 输出为主；长期记忆抽取、向量化检索和复杂权限模型仍需继续设计。
 - Deep Research 会读取 Skill catalog 并自动规划，但只有注册了 executor 或受控执行路径的 Skill 才能稳定真实执行。
-- 当前还没有持久化 checkpoint。刷新或进程重启后的任务恢复能力需要后续补充。
+- BackgroundRun 可在浏览器断开或刷新后继续运行并重新连接，但当前还没有持久化 checkpoint；后端进程重启后不能恢复正在执行的任务。
 - 生成代码型 Skill 有 AST 与内置函数限制，但仍在 Python 进程内执行，不应运行不可信 Skill。
 - Shell Command 已做白名单硬约束，但默认没有用户确认，也不等同于容器或系统级沙箱。
